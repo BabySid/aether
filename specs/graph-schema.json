@@ -1,0 +1,1269 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://graph-workflow.io/schema/v1/workflow.json",
+    "$version": "1.0.0",
+    "title": "Graph Workflow Protocol Schema",
+    "description": "JSON Schema definition for the Graph Workflow Protocol",
+    "definitions": {
+        "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "DNS-1123 compliant name"
+        },
+        "duration": {
+            "type": "string",
+            "pattern": "^(?=.)([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+            "minLength": 1,
+            "description": "Duration format, e.g. 30s, 5m, 2h, 1d, 1h30m",
+            "examples": [
+                "30s",
+                "5m",
+                "2h",
+                "1d",
+                "1h30m"
+            ]
+        },
+        "metadata": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "$ref": "#/definitions/name",
+                    "description": "Resource name, must be unique"
+                },
+                "namespace": {
+                    "type": "string",
+                    "default": "default",
+                    "description": "Namespace for resource isolation"
+                },
+                "version": {
+                    "type": "string",
+                    "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9.]+)?$",
+                    "description": "Version number following SemVer convention"
+                },
+                "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Labels for classification and filtering"
+                },
+                "annotations": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Annotations for storing additional metadata"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false
+        },
+        "parameter": {
+            "type": "object",
+            "description": "Parameter definition (declaration time)",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Parameter name"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "string",
+                        "number",
+                        "integer",
+                        "boolean",
+                        "object",
+                        "array",
+                        "any"
+                    ],
+                    "default": "any",
+                    "description": "Parameter type declaration, used for SDK static type checking and engine runtime type conversion/validation"
+                },
+                "value": {
+                    "oneOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "type": "object"
+                        },
+                        {
+                            "type": "array"
+                        }
+                    ],
+                    "description": "Parameter value"
+                },
+                "default": {
+                    "oneOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "type": "object"
+                        },
+                        {
+                            "type": "array"
+                        }
+                    ],
+                    "description": "Default value"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Parameter description"
+                },
+                "enum": {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "number"
+                            }
+                        ]
+                    },
+                    "description": "Allowed value enumeration"
+                },
+                "valueFrom": {
+                    "$ref": "#/definitions/valueFrom",
+                    "description": "Value source"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false
+        },
+        "valueFrom": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Read value from a file path"
+                },
+                "parameter": {
+                    "type": "string",
+                    "description": "Reference value from another parameter"
+                },
+                "expression": {
+                    "type": "string",
+                    "description": "Compute value via expression"
+                },
+                "secretKeyRef": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        },
+                        "key": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "key"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Reference value from a Secret"
+                }
+            },
+            "additionalProperties": false
+        },
+        "artifact": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Artifact name"
+                },
+                "from": {
+                    "type": "string",
+                    "description": "Reference an artifact from another task"
+                },
+                "source": {
+                    "$ref": "#/definitions/artifactSource",
+                    "description": "Artifact source"
+                },
+                "archive": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "tar",
+                                "tar.gz",
+                                "zip",
+                                "none"
+                            ],
+                            "default": "tar.gz"
+                        }
+                    },
+                    "description": "Archive configuration"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false
+        },
+        "artifactSource": {
+            "type": "object",
+            "description": "Artifact storage source using type + config pattern, consistent with executor design. Built-in types: oss/local/http; extensible via engine plugin",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "Storage type. Built-in: oss, local, http; extensible via engine plugin"
+                },
+                "config": {
+                    "oneOf": [
+                        {
+                            "$ref": "#/definitions/ossSourceConfig"
+                        },
+                        {
+                            "$ref": "#/definitions/localSourceConfig"
+                        },
+                        {
+                            "$ref": "#/definitions/httpSourceConfig"
+                        }
+                    ],
+                    "description": "Storage configuration, structure determined by type"
+                }
+            },
+            "required": [
+                "type",
+                "config"
+            ],
+            "additionalProperties": false
+        },
+        "ossSourceConfig": {
+            "type": "object",
+            "description": "OSS object storage configuration (type: oss)",
+            "properties": {
+                "bucket": {
+                    "type": "string",
+                    "description": "Bucket name"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Object key/path"
+                },
+                "endpoint": {
+                    "type": "string",
+                    "description": "OSS endpoint URL"
+                }
+            },
+            "required": [
+                "bucket",
+                "key"
+            ],
+            "additionalProperties": false
+        },
+        "localSourceConfig": {
+            "type": "object",
+            "description": "Local file storage configuration (type: local)",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Local file path"
+                }
+            },
+            "required": [
+                "path"
+            ],
+            "additionalProperties": false
+        },
+        "httpSourceConfig": {
+            "type": "object",
+            "description": "HTTP remote file configuration (type: http)",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "HTTP URL"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Custom request headers"
+                }
+            },
+            "required": [
+                "url"
+            ],
+            "additionalProperties": false
+        },
+        "arguments": {
+            "type": "object",
+            "properties": {
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/parameter"
+                    },
+                    "description": "Parameter list"
+                },
+                "artifacts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/artifact"
+                    },
+                    "description": "Artifact list"
+                }
+            },
+            "additionalProperties": false
+        },
+        "inputs": {
+            "type": "object",
+            "properties": {
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/parameter"
+                    },
+                    "description": "Input parameter list"
+                },
+                "artifacts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/artifact"
+                    },
+                    "description": "Input artifact list"
+                }
+            },
+            "additionalProperties": false
+        },
+        "phase": {
+            "type": "string",
+            "enum": [
+                "Pending",
+                "Running",
+                "Succeeded",
+                "Failed",
+                "Error",
+                "Skipped",
+                "Timeout"
+            ],
+            "description": "Execution phase: Pending=awaiting scheduling/dependency completion, Running=currently executing, Succeeded=execution successful, Failed=business failure (executor ran normally but result did not meet expectations), Error=system error (executor crash, network unreachable, OOM, etc.), Skipped=skipped (when=false / dependency failed without continueOn), Timeout=execution timed out (triggered by template.timeout / task.timeout)"
+        },
+        "metrics": {
+            "type": "object",
+            "description": "Execution metrics (auto-populated by engine, read-only)",
+            "readOnly": true,
+            "properties": {
+                "startedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Execution start time"
+                },
+                "finishedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Execution end time"
+                },
+                "duration": {
+                    "$ref": "#/definitions/duration",
+                    "description": "Actual execution duration"
+                },
+                "retries": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Actual retry count"
+                }
+            },
+            "additionalProperties": false
+        },
+        "outputs": {
+            "type": "object",
+            "description": "Template outputs. Contains engine auto-populated execution status fields (phase/code/msg/metrics/progress, readOnly) and user-declared business outputs (parameters/artifacts)",
+            "properties": {
+                "phase": {
+                    "$ref": "#/definitions/phase",
+                    "readOnly": true,
+                    "description": "Execution phase (auto-populated by engine)"
+                },
+                "code": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Execution result code (auto-populated by engine): 0=success, 1=failure (fail/error/timeout)"
+                },
+                "msg": {
+                    "type": "string",
+                    "description": "Human-readable result message or error details"
+                },
+                "metrics": {
+                    "$ref": "#/definitions/metrics",
+                    "readOnly": true,
+                    "description": "Execution metrics (auto-populated by engine)"
+                },
+                "progress": {
+                    "type": "string",
+                    "pattern": "^[0-9]+/[0-9]+$",
+                    "readOnly": true,
+                    "description": "Execution progress, e.g. '3/5'. For graph nodes: completed tasks/total tasks; for loop nodes: completed iterations/total iterations (auto-populated by engine)"
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/parameter"
+                    },
+                    "description": "Output parameter list"
+                },
+                "artifacts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/artifact"
+                    },
+                    "description": "Output artifact list"
+                }
+            },
+            "additionalProperties": false
+        },
+        "retry": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "default": 0,
+                    "description": "Maximum retry count"
+                },
+                "backoff": {
+                    "$ref": "#/definitions/backoff",
+                    "description": "Backoff strategy"
+                },
+                "expression": {
+                    "type": "string",
+                    "description": "Custom retry condition expression"
+                }
+            },
+            "additionalProperties": false
+        },
+        "backoff": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "$ref": "#/definitions/duration",
+                    "default": "1s",
+                    "description": "Initial wait duration"
+                },
+                "factor": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 2,
+                    "description": "Exponential factor"
+                },
+                "maxDuration": {
+                    "$ref": "#/definitions/duration",
+                    "default": "1m",
+                    "description": "Maximum wait duration"
+                }
+            },
+            "additionalProperties": false
+        },
+        "continueOn": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to continue subsequent nodes when a node fails"
+                },
+                "error": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to continue subsequent nodes when a node errors"
+                },
+                "timeout": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to continue subsequent nodes when a node times out"
+                }
+            },
+            "additionalProperties": false
+        },
+        "resources": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "pattern": "^[0-9]+m?$"
+                        },
+                        {
+                            "type": "number"
+                        }
+                    ],
+                    "description": "CPU resource, e.g. '100m' or '1'"
+                },
+                "memory": {
+                    "type": "string",
+                    "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)?$",
+                    "description": "Memory resource, e.g. '256Mi', '1Gi'"
+                },
+                "gpu": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "GPU count"
+                }
+            },
+            "additionalProperties": false
+        },
+        "phaseConditions": {
+            "type": "object",
+            "description": "Custom phase determination conditions",
+            "properties": {
+                "succeeded": {
+                    "type": "string",
+                    "description": "Success condition expression. Marks as Succeeded when true"
+                },
+                "failed": {
+                    "type": "string",
+                    "description": "Business failure condition expression. Marks as Failed when true"
+                },
+                "error": {
+                    "type": "string",
+                    "description": "System error condition expression. Marks as Error when true (usually no need to customize; engine handles infrastructure exceptions by default)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "executor": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "script",
+                        "function",
+                        "await"
+                    ],
+                    "description": "Executor type. Engine routes to the corresponding executor pool based on type + resources"
+                },
+                "config": {
+                    "oneOf": [
+                        {
+                            "$ref": "#/definitions/scriptConfig"
+                        },
+                        {
+                            "$ref": "#/definitions/functionConfig"
+                        },
+                        {
+                            "$ref": "#/definitions/awaitConfig"
+                        }
+                    ],
+                    "description": "Executor configuration"
+                }
+            },
+            "required": [
+                "type",
+                "config"
+            ],
+            "additionalProperties": false
+        },
+        "scriptConfig": {
+            "type": "object",
+            "properties": {
+                "runtime": {
+                    "type": "string",
+                    "description": "Script runtime"
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Script source code"
+                }
+            },
+            "required": [
+                "runtime",
+                "source"
+            ],
+            "additionalProperties": false
+        },
+        "functionConfig": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Built-in or custom function name, e.g. sleep"
+                },
+                "arguments": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Function arguments"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false
+        },
+        "awaitConfig": {
+            "type": "object",
+            "description": "External signal wait configuration (executor type: await). Pauses execution and waits for an external system to send a signal via the engine's resume API. Signal payload is automatically mapped to template outputs. Timeout is controlled by template.timeout; on timeout the phase becomes Timeout, and task.continueOn.timeout determines whether subsequent nodes continue",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Notification message with template variable support. Informs external systems that a task is waiting, e.g. 'Please approve content: {{inputs.parameters.content_url}}'"
+                }
+            },
+            "additionalProperties": false
+        },
+        "task": {
+            "type": "object",
+            "description": "Execution node in the graph, the basic execution unit of graph/v1",
+            "properties": {
+                "name": {
+                    "$ref": "#/definitions/name",
+                    "description": "Node name, unique within its parent graph"
+                },
+                "template": {
+                    "type": "string",
+                    "description": "Referenced template name"
+                },
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "List of prerequisite task names"
+                },
+                "arguments": {
+                    "$ref": "#/definitions/arguments",
+                    "description": "Arguments passed to the template"
+                },
+                "when": {
+                    "type": "string",
+                    "description": "Condition expression; task executes only when true"
+                },
+                "timeout": {
+                    "$ref": "#/definitions/duration",
+                    "description": "Node-level timeout"
+                },
+                "continueOn": {
+                    "$ref": "#/definitions/continueOn",
+                    "description": "Continue-on-failure conditions"
+                },
+                "hooks": {
+                    "$ref": "#/definitions/hooks",
+                    "description": "Node-level lifecycle hooks for observability and auditing"
+                }
+            },
+            "required": [
+                "name",
+                "template"
+            ],
+            "additionalProperties": false
+        },
+        "dag": {
+            "type": "object",
+            "properties": {
+                "entrypoints": {
+                    "oneOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "minItems": 1
+                        }
+                    ],
+                    "description": "Graph entry nodes, can be a single name or array of names. Can be omitted; the engine automatically infers all nodes with no predecessors and starts them in parallel as entry points"
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task"
+                    },
+                    "minItems": 1,
+                    "description": "Task list"
+                },
+                "continueOn": {
+                    "$ref": "#/definitions/continueOn",
+                    "description": "DAG-level continue-on-failure policy (default), can be overridden by task.continueOn. When not set, all exceptions (failed/error/timeout) stop subsequent nodes"
+                }
+            },
+            "required": [
+                "tasks"
+            ],
+            "additionalProperties": false
+        },
+        "loop": {
+            "type": "object",
+            "description": "Loop node spec. Loop mode is implicitly determined by field presence: repeatCondition → conditional loop (doWhile semantics, body executes at least once); items/itemsFrom → data parallel (forEach semantics). Loop body is an embedded dag supporting arbitrary nesting",
+            "properties": {
+                "repeatCondition": {
+                    "type": "string",
+                    "description": "Loop repeat condition expression (conditional loop mode); evaluated after each body execution, repeats when true, exits loop when false"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "object"
+                            }
+                        ]
+                    },
+                    "description": "Static iteration list for data parallel mode; mutually exclusive with itemsFrom"
+                },
+                "itemsFrom": {
+                    "type": "string",
+                    "description": "Dynamic iteration list source for data parallel mode (template variable reference resolving to a JSON array), e.g. {{tasks.fetch-list.outputs.parameters.items}}; mutually exclusive with items"
+                },
+                "concurrency": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 1,
+                    "description": "Concurrency for data parallel mode: 1=serial (default), N=up to N concurrent iterations, 0=unlimited concurrency (all parallel)"
+                },
+                "maxIterations": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "default": 100,
+                    "description": "Maximum iteration limit to prevent infinite loops (applies to conditional loop mode; data parallel mode limit is determined by list length)"
+                },
+                "body": {
+                    "$ref": "#/definitions/dag",
+                    "description": "Loop body as an embedded dag. Loop variables available inside: {{loop.item}} (current item, data parallel mode), {{loop.item.<field>}} (current item sub-field), {{loop.index}} (current index, 0-based, data parallel mode), {{loop.iteration}} (current round, 1-based), {{loop.count}} (total iterations, available only in outputs). Cross-layer references via {{tasks.<outer-node-path>.outputs...}}"
+                },
+                "aggregate": {
+                    "$ref": "#/definitions/aggregate",
+                    "description": "Loop output aggregation strategy controlling how multi-iteration outputs are summarized into the loop node's final output"
+                }
+            },
+            "required": [
+                "body"
+            ],
+            "oneOf": [
+                {
+                    "description": "Conditional loop mode (doWhile semantics): has repeatCondition, no items/itemsFrom",
+                    "required": [
+                        "repeatCondition"
+                    ],
+                    "not": {
+                        "anyOf": [
+                            {
+                                "required": [
+                                    "items"
+                                ]
+                            },
+                            {
+                                "required": [
+                                    "itemsFrom"
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "description": "Data parallel mode (forEach semantics): has items, no repeatCondition",
+                    "required": [
+                        "items"
+                    ],
+                    "not": {
+                        "anyOf": [
+                            {
+                                "required": [
+                                    "repeatCondition"
+                                ]
+                            },
+                            {
+                                "required": [
+                                    "itemsFrom"
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "description": "Data parallel mode (forEach semantics): has itemsFrom, no repeatCondition",
+                    "required": [
+                        "itemsFrom"
+                    ],
+                    "not": {
+                        "anyOf": [
+                            {
+                                "required": [
+                                    "repeatCondition"
+                                ]
+                            },
+                            {
+                                "required": [
+                                    "items"
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ],
+            "additionalProperties": false
+        },
+        "aggregate": {
+            "type": "object",
+            "description": "Output aggregation strategy for loop nodes",
+            "properties": {
+                "strategy": {
+                    "type": "string",
+                    "enum": [
+                        "last",
+                        "first",
+                        "list",
+                        "merge"
+                    ],
+                    "default": "last",
+                    "description": "Aggregation strategy: last=use last iteration output, first=use first iteration output, list=collect all iteration outputs into an ordered array (by loop.index), merge=deep merge all iteration object outputs"
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of output parameter names to include in aggregation; omit to aggregate all output parameters"
+                }
+            },
+            "additionalProperties": false
+        },
+        "template": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "$ref": "#/definitions/name",
+                    "description": "Template name, unique within workflowSpec.templates"
+                },
+                "inputs": {
+                    "$ref": "#/definitions/inputs",
+                    "description": "Template input definitions"
+                },
+                "outputs": {
+                    "$ref": "#/definitions/outputs",
+                    "description": "Template output definitions"
+                },
+                "phaseConditions": {
+                    "$ref": "#/definitions/phaseConditions",
+                    "description": "Custom phase determination conditions that decide outputs.phase value. After template execution, engine evaluates in error > failed > succeeded priority. Uses engine built-in default rules when not specified. Expression context varies by template type: executor(script) → result.exitCode/stdout/stderr; executor(function) → result.value/error; await → signal.payload; dag → dag.succeeded/failed/total; loop → loop.succeeded/failed/total"
+                },
+                "dag": {
+                    "$ref": "#/definitions/dag",
+                    "description": "Graph execution definition (dag type template)"
+                },
+                "executor": {
+                    "$ref": "#/definitions/executor",
+                    "description": "Executor configuration (executor type template)"
+                },
+                "loop": {
+                    "$ref": "#/definitions/loop",
+                    "description": "Loop execution configuration (loop type template)"
+                },
+                "timeout": {
+                    "$ref": "#/definitions/duration",
+                    "description": "Template execution timeout"
+                },
+                "retry": {
+                    "$ref": "#/definitions/retry",
+                    "description": "Retry strategy (applicable to executor type templates)"
+                },
+                "resources": {
+                    "$ref": "#/definitions/resources",
+                    "description": "Resource requirements (applicable to executor type templates)"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "oneOf": [
+                {
+                    "description": "dag type template: contains sub-graph definition",
+                    "required": [
+                        "dag"
+                    ],
+                    "not": {
+                        "anyOf": [
+                            {
+                                "required": [
+                                    "executor"
+                                ]
+                            },
+                            {
+                                "required": [
+                                    "loop"
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "description": "executor type template: executes concrete tasks",
+                    "required": [
+                        "executor"
+                    ],
+                    "not": {
+                        "anyOf": [
+                            {
+                                "required": [
+                                    "dag"
+                                ]
+                            },
+                            {
+                                "required": [
+                                    "loop"
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "description": "loop type template: iteratively executes sub-graph (conditional loop / data parallel)",
+                    "required": [
+                        "loop"
+                    ],
+                    "not": {
+                        "anyOf": [
+                            {
+                                "required": [
+                                    "dag"
+                                ]
+                            },
+                            {
+                                "required": [
+                                    "executor"
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ],
+            "additionalProperties": false
+        },
+        "hooks": {
+            "type": "object",
+            "description": "Lifecycle hooks",
+            "properties": {
+                "onStart": {
+                    "$ref": "#/definitions/hook",
+                    "description": "Triggered when workflow starts. Context: hook.workflow.name/id, hook.workflow.parameters.*"
+                },
+                "onSuccess": {
+                    "$ref": "#/definitions/hook",
+                    "description": "Triggered when workflow succeeds. Context: hook.workflow.*, hook.workflow.outputs.*, hook.workflow.duration"
+                },
+                "onFailure": {
+                    "$ref": "#/definitions/hook",
+                    "description": "Triggered on workflow business failure (node returned Failed). Context: hook.workflow.*, hook.trigger.node/phase/code/msg"
+                },
+                "onError": {
+                    "$ref": "#/definitions/hook",
+                    "description": "Triggered on workflow system error (node returned Error). Context: hook.workflow.*, hook.trigger.node/phase/code/msg"
+                },
+                "onExit": {
+                    "$ref": "#/definitions/hook",
+                    "description": "Triggered when workflow exits (regardless of success, failure, or error). Context: hook.workflow.*, hook.workflow.phase/duration"
+                }
+            },
+            "additionalProperties": false
+        },
+        "hook": {
+            "type": "object",
+            "description": "Hook definition. Parameters are automatically injected by engine with system context (hook.workflow.*, hook.trigger.*); no manual parameter passing needed",
+            "properties": {
+                "template": {
+                    "type": "string",
+                    "description": "Hook template name; access engine auto-injected system context via {{hook.*}} within the template"
+                }
+            },
+            "required": [
+                "template"
+            ],
+            "additionalProperties": false
+        },
+        "workflowSpec": {
+            "type": "object",
+            "properties": {
+                "entrypoint": {
+                    "type": "string",
+                    "description": "Entry template name (name of a dag type template in the templates list)"
+                },
+                "arguments": {
+                    "$ref": "#/definitions/arguments",
+                    "description": "Workflow-level arguments, accessible via {{workflow.parameters.xxx}}"
+                },
+                "timeout": {
+                    "$ref": "#/definitions/duration",
+                    "default": "1h",
+                    "description": "Global timeout"
+                },
+                "retry": {
+                    "$ref": "#/definitions/retry",
+                    "description": "Global retry strategy, used when individual templates have no retry configured"
+                },
+                "priority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000,
+                    "default": 500,
+                    "description": "Workflow priority; higher values indicate higher priority"
+                },
+                "maxNestedDepth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 3,
+                    "description": "Maximum nesting depth (both dag and loop nesting count)"
+                },
+                "templates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/template"
+                    },
+                    "minItems": 1,
+                    "description": "Template definition list containing dag, executor, await, and loop types"
+                },
+                "hooks": {
+                    "$ref": "#/definitions/hooks",
+                    "description": "Workflow lifecycle hooks"
+                },
+                "workflowTemplateRef": {
+                    "$ref": "#/definitions/workflowTemplateRef",
+                    "description": "Reference to an external WorkflowTemplate; mutually exclusive with entrypoint+templates"
+                }
+            },
+            "oneOf": [
+                {
+                    "required": [
+                        "entrypoint",
+                        "templates"
+                    ],
+                    "not": {
+                        "required": [
+                            "workflowTemplateRef"
+                        ]
+                    }
+                },
+                {
+                    "required": [
+                        "workflowTemplateRef"
+                    ],
+                    "not": {
+                        "required": [
+                            "entrypoint",
+                            "templates"
+                        ]
+                    }
+                }
+            ],
+            "additionalProperties": false
+        },
+        "workflowTemplateRef": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Referenced WorkflowTemplate name"
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "Namespace of the WorkflowTemplate; defaults to the current workflow's namespace when omitted"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false
+        },
+        "cronWorkflowSpec": {
+            "type": "object",
+            "properties": {
+                "schedule": {
+                    "type": "string",
+                    "description": "Cron expression, e.g. '0 * * * *' (triggers every hour on the hour)"
+                },
+                "timezone": {
+                    "type": "string",
+                    "default": "UTC",
+                    "description": "Timezone, e.g. Asia/Shanghai"
+                },
+                "concurrencyPolicy": {
+                    "type": "string",
+                    "enum": [
+                        "Allow",
+                        "Forbid",
+                        "Replace"
+                    ],
+                    "default": "Allow",
+                    "description": "Concurrency policy when the previous schedule has not finished: Allow=allow concurrent runs, Forbid=skip this run, Replace=terminate previous and start new instance"
+                },
+                "startingDeadlineSeconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Starting deadline in seconds; skip this run if not started within this time"
+                },
+                "successfulJobsHistoryLimit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 3,
+                    "description": "Number of successful workflow runs to retain in history"
+                },
+                "failedJobsHistoryLimit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 1,
+                    "description": "Number of failed workflow runs to retain in history"
+                },
+                "suspend": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to suspend scheduling (resource is not deleted, only triggering is paused)"
+                },
+                "workflowSpec": {
+                    "$ref": "#/definitions/workflowSpec",
+                    "description": "Workflow spec created on each scheduled trigger"
+                },
+                "workflowMetadata": {
+                    "$ref": "#/definitions/metadata",
+                    "description": "Metadata template for generated Workflow instances"
+                }
+            },
+            "required": [
+                "schedule",
+                "workflowSpec"
+            ],
+            "additionalProperties": false
+        }
+    },
+    "oneOf": [
+        {
+            "type": "object",
+            "title": "Workflow",
+            "description": "One-time execution workflow instance",
+            "properties": {
+                "apiVersion": {
+                    "type": "string",
+                    "const": "graph/v1",
+                    "description": "API version"
+                },
+                "kind": {
+                    "type": "string",
+                    "const": "Workflow",
+                    "description": "Resource type"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/metadata",
+                    "description": "Metadata"
+                },
+                "spec": {
+                    "$ref": "#/definitions/workflowSpec",
+                    "description": "Workflow spec"
+                }
+            },
+            "required": [
+                "apiVersion",
+                "kind",
+                "metadata",
+                "spec"
+            ],
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "title": "CronWorkflow",
+            "description": "Scheduled/periodic workflow",
+            "properties": {
+                "apiVersion": {
+                    "type": "string",
+                    "const": "graph/v1",
+                    "description": "API version"
+                },
+                "kind": {
+                    "type": "string",
+                    "const": "CronWorkflow",
+                    "description": "Resource type"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/metadata",
+                    "description": "Metadata"
+                },
+                "spec": {
+                    "$ref": "#/definitions/cronWorkflowSpec",
+                    "description": "CronWorkflow spec"
+                }
+            },
+            "required": [
+                "apiVersion",
+                "kind",
+                "metadata",
+                "spec"
+            ],
+            "additionalProperties": false
+        },
+        {
+            "type": "object",
+            "title": "WorkflowTemplate",
+            "description": "Reusable workflow template that can be referenced by Workflow via workflowTemplateRef",
+            "properties": {
+                "apiVersion": {
+                    "type": "string",
+                    "const": "graph/v1",
+                    "description": "API version"
+                },
+                "kind": {
+                    "type": "string",
+                    "const": "WorkflowTemplate",
+                    "description": "Resource type"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/metadata",
+                    "description": "Metadata"
+                },
+                "spec": {
+                    "$ref": "#/definitions/workflowSpec",
+                    "description": "WorkflowTemplate spec"
+                }
+            },
+            "required": [
+                "apiVersion",
+                "kind",
+                "metadata",
+                "spec"
+            ],
+            "additionalProperties": false
+        }
+    ]
+}

@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Graph Workflow Protocol — Schema Reference</title>
+<style>
+:root {
+  --bg: #1e1e2e;
+  --surface: #282840;
+  --border: #3e3e5e;
+  --text: #cdd6f4;
+  --dim: #6c7086;
+  --type-name: #f5c2e7;
+  --field: #cdd6f4;
+  --type-ref: #89b4fa;
+  --value: #cba6f7;
+  --default-val: #f38ba8;
+  --comment: #6c7086;
+  --readonly: #a6e3a1;
+  --separator: #fab387;
+  --keyword: #89dceb;
+  --level0: #f5c2e7;
+  --level1: #cba6f7;
+  --level2: #89b4fa;
+  --level3: #74c7ec;
+  --level4: #94e2d5;
+  --level5: #a6e3a1;
+  --level6: #f9e2af;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  background: var(--bg); color: var(--text);
+  line-height: 1.65; padding: 2rem;
+  max-width: 1400px; margin: 0 auto;
+}
+h1 { font-size: 1.6rem; color: var(--type-name); margin-bottom: 0.3rem; }
+h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
+.subtitle { color: var(--dim); font-size: 0.82rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; }
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; margin-bottom: 1.5rem;
+  padding: 0.8rem 1rem; background: var(--surface); border-radius: 8px;
+  border: 1px solid var(--border); font-size: 0.78rem;
+}
+.legend-item { display: flex; align-items: center; gap: 0.35rem; }
+.legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+.level { margin-bottom: 1.5rem; }
+.level-header {
+  font-size: 1rem; font-weight: 600; padding: 0.5rem 0.8rem;
+  border-radius: 6px 6px 0 0; border: 1px solid var(--border); border-bottom: none;
+  cursor: pointer; user-select: none; display: flex; align-items: center; gap: 0.5rem;
+}
+.level-header:hover { filter: brightness(1.15); }
+.level-header .arrow { transition: transform 0.2s; font-size: 0.7rem; }
+.level-header.collapsed .arrow { transform: rotate(-90deg); }
+.level-body {
+  border: 1px solid var(--border); border-radius: 0 0 6px 6px; padding: 0.8rem;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 0.8rem;
+}
+.level-body.hidden { display: none; }
+
+.l0 .level-header { background: color-mix(in srgb, var(--level0) 12%, var(--surface)); color: var(--level0); }
+.l1 .level-header { background: color-mix(in srgb, var(--level1) 12%, var(--surface)); color: var(--level1); }
+.l2 .level-header { background: color-mix(in srgb, var(--level2) 12%, var(--surface)); color: var(--level2); }
+.l3 .level-header { background: color-mix(in srgb, var(--level3) 12%, var(--surface)); color: var(--level3); }
+.l4 .level-header { background: color-mix(in srgb, var(--level4) 12%, var(--surface)); color: var(--level4); }
+.l5 .level-header { background: color-mix(in srgb, var(--level5) 12%, var(--surface)); color: var(--level5); }
+.l6 .level-header { background: color-mix(in srgb, var(--level6) 12%, var(--surface)); color: var(--level6); }
+
+.type-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.7rem 0.9rem; font-size: 0.8rem; overflow-x: auto;
+}
+.type-card:target { border-color: var(--type-name); box-shadow: 0 0 8px color-mix(in srgb, var(--type-name) 30%, transparent); }
+.type-card.wide { grid-column: 1 / -1; }
+
+.tn  { color: var(--type-name); font-weight: 700; font-size: 0.9rem; }
+.f   { color: var(--field); }
+.tr  { color: var(--type-ref); cursor: pointer; text-decoration: none; }
+.tr:hover { text-decoration: underline; color: var(--type-name); }
+.v   { color: var(--value); }
+.dv  { color: var(--default-val); }
+.c   { color: var(--comment); font-style: italic; }
+.ro  { color: var(--readonly); font-style: italic; font-size: 0.72rem; }
+.sep { color: var(--separator); font-weight: 600; display: block; margin: 0.2rem 0; }
+.kw  { color: var(--keyword); }
+.line { display: block; padding-left: 1.5rem; white-space: pre-wrap; }
+
+@media (max-width: 900px) {
+  .level-body { grid-template-columns: 1fr; }
+  body { padding: 1rem; }
+}
+</style>
+</head>
+<body>
+
+<h1>Graph Workflow Protocol <small>v1.0.0</small></h1>
+<p class="subtitle">Schema type reference &mdash; from global structure down to primitive types. Click type references to navigate. Click level headers to collapse/expand.</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--type-name)"></span> <span class="tn">TypeName</span></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--field)"></span> <span class="f">field</span> / <span class="f">field?</span></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--type-ref)"></span> <a class="tr">: TypeRef</a></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--value)"></span> <span class="v">"literal"</span> / <span class="v">A | B</span></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--default-val)"></span> <span class="dv">= default</span></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--comment)"></span> <span class="c"># comment</span></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--readonly)"></span> <span class="ro">«readonly»</span></div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--keyword)"></span> <span class="kw">Map&lt;K, V&gt;</span> = object</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:var(--separator)"></span> <span class="sep" style="display:inline;margin:0">── or ──</span></div>
+</div>
+
+<!-- ═══════════════════ LEVEL 0 ═══════════════════ -->
+<div class="level l0">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 0 — Document (top-level dispatch)
+  </div>
+  <div class="level-body">
+    <div class="type-card wide" id="Document">
+      <span class="tn">Document</span> <span class="kw">=</span> <a class="tr" href="#Workflow">Workflow</a> <span class="v">|</span> <a class="tr" href="#CronWorkflow">CronWorkflow</a> <span class="v">|</span> <a class="tr" href="#WorkflowTemplate">WorkflowTemplate</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ LEVEL 1 ═══════════════════ -->
+<div class="level l1">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 1 — Resources
+  </div>
+  <div class="level-body">
+
+    <div class="type-card" id="Workflow">
+      <span class="tn">Workflow</span>
+      <span class="line"><span class="f">apiVersion</span> <span class="dv">= "graph/v1"</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">kind</span> <span class="dv">= "Workflow"</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">metadata</span>: <a class="tr" href="#Metadata">Metadata</a></span>
+      <span class="line"><span class="f">spec</span>: <a class="tr" href="#WorkflowSpec">WorkflowSpec</a></span>
+    </div>
+
+    <div class="type-card" id="CronWorkflow">
+      <span class="tn">CronWorkflow</span>
+      <span class="line"><span class="f">apiVersion</span> <span class="dv">= "graph/v1"</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">kind</span> <span class="dv">= "CronWorkflow"</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">metadata</span>: <a class="tr" href="#Metadata">Metadata</a></span>
+      <span class="line"><span class="f">spec</span>: <a class="tr" href="#CronWorkflowSpec">CronWorkflowSpec</a></span>
+    </div>
+
+    <div class="type-card" id="WorkflowTemplate">
+      <span class="tn">WorkflowTemplate</span>
+      <span class="line"><span class="f">apiVersion</span> <span class="dv">= "graph/v1"</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">kind</span> <span class="dv">= "WorkflowTemplate"</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">metadata</span>: <a class="tr" href="#Metadata">Metadata</a></span>
+      <span class="line"><span class="f">spec</span>: <a class="tr" href="#WorkflowSpec">WorkflowSpec</a></span>
+    </div>
+
+    <div class="type-card" id="Metadata">
+      <span class="tn">Metadata</span>
+      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique resource name</span></span>
+      <span class="line"><span class="f">namespace?</span> <span class="dv">= "default"</span>: <span class="kw">string</span> <span class="c"># resource isolation</span></span>
+      <span class="line"><span class="f">version?</span>: <span class="kw">string</span> <span class="c"># SemVer, e.g. "1.0.0"</span></span>
+      <span class="line"><span class="f">labels?</span>: <span class="kw">Map&lt;string, string&gt;</span> <span class="c"># classification &amp; filtering</span></span>
+      <span class="line"><span class="f">annotations?</span>: <span class="kw">Map&lt;string, string&gt;</span> <span class="c"># additional metadata</span></span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEVEL 2 ═══════════════════ -->
+<div class="level l2">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 2 — Specs &amp; Template
+  </div>
+  <div class="level-body">
+
+    <div class="type-card wide" id="WorkflowSpec">
+      <span class="tn">WorkflowSpec</span> <span class="c"># oneOf: inline or ref</span>
+      <span class="sep">── ① inline ──</span>
+      <span class="line"><span class="f">entrypoint</span>: <span class="kw">string</span> <span class="c"># entry template name (dag type)</span></span>
+      <span class="line"><span class="f">templates</span>: [<a class="tr" href="#Template">Template</a>]<span class="v">+</span> <span class="c"># ≥1 template definitions</span></span>
+      <span class="sep">── or ② ref ──</span>
+      <span class="line"><span class="f">workflowTemplateRef</span>: <a class="tr" href="#WorkflowTemplateRef">WorkflowTemplateRef</a></span>
+      <span class="sep">── common (both modes) ──</span>
+      <span class="line"><span class="f">arguments?</span>: <a class="tr" href="#Arguments">Arguments</a> <span class="c"># {{workflow.parameters.xxx}}</span></span>
+      <span class="line"><span class="f">timeout?</span> <span class="dv">= "1h"</span>: <a class="tr" href="#Duration">Duration</a> <span class="c"># global timeout</span></span>
+      <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a> <span class="c"># global fallback retry</span></span>
+      <span class="line"><span class="f">priority?</span> <span class="dv">= 500</span>: <span class="kw">int[0..1000]</span> <span class="c"># higher = more urgent</span></span>
+      <span class="line"><span class="f">maxNestedDepth?</span> <span class="dv">= 3</span>: <span class="kw">int[1..10]</span> <span class="c"># dag/loop nesting limit</span></span>
+      <span class="line"><span class="f">hooks?</span>: <a class="tr" href="#Hooks">Hooks</a> <span class="c"># workflow lifecycle hooks</span></span>
+    </div>
+
+    <div class="type-card" id="WorkflowTemplateRef">
+      <span class="tn">WorkflowTemplateRef</span>
+      <span class="line"><span class="f">name</span>: <span class="kw">string</span> <span class="c"># referenced template name</span></span>
+      <span class="line"><span class="f">namespace?</span>: <span class="kw">string</span> <span class="c"># defaults to current ns</span></span>
+    </div>
+
+    <div class="type-card" id="CronWorkflowSpec">
+      <span class="tn">CronWorkflowSpec</span>
+      <span class="line"><span class="f">schedule</span>: <span class="kw">string</span> <span class="c"># cron expr, e.g. "0 * * * *"</span></span>
+      <span class="line"><span class="f">workflowSpec</span>: <a class="tr" href="#WorkflowSpec">WorkflowSpec</a></span>
+      <span class="line"><span class="f">timezone?</span> <span class="dv">= "UTC"</span>: <span class="kw">string</span> <span class="c"># e.g. "Asia/Shanghai"</span></span>
+      <span class="line"><span class="f">concurrencyPolicy?</span> <span class="dv">= "Allow"</span>: <span class="v">"Allow" | "Forbid" | "Replace"</span></span>
+      <span class="line"><span class="f">startingDeadlineSeconds?</span>: <span class="kw">int[0..]</span></span>
+      <span class="line"><span class="f">successfulJobsHistoryLimit?</span> <span class="dv">= 3</span>: <span class="kw">int[0..]</span></span>
+      <span class="line"><span class="f">failedJobsHistoryLimit?</span> <span class="dv">= 1</span>: <span class="kw">int[0..]</span></span>
+      <span class="line"><span class="f">suspend?</span> <span class="dv">= false</span>: <span class="kw">bool</span> <span class="c"># pause triggering</span></span>
+      <span class="line"><span class="f">workflowMetadata?</span>: <a class="tr" href="#Metadata">Metadata</a></span>
+    </div>
+
+    <div class="type-card wide" id="Template">
+      <span class="tn">Template</span> <span class="c"># oneOf: dag, executor, or loop</span>
+      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within templates[]</span></span>
+      <span class="line"><span class="f">inputs?</span>: <a class="tr" href="#Inputs">Inputs</a></span>
+      <span class="line"><span class="f">outputs?</span>: <a class="tr" href="#Outputs">Outputs</a></span>
+      <span class="line"><span class="f">phaseConditions?</span>: <a class="tr" href="#PhaseConditions">PhaseConditions</a> <span class="c"># custom phase logic</span></span>
+      <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
+      <span class="sep">── ① dag type ──</span>
+      <span class="line"><span class="f">dag</span>: <a class="tr" href="#DAG">DAG</a></span>
+      <span class="sep">── or ② executor type ──</span>
+      <span class="line"><span class="f">executor</span>: <a class="tr" href="#Executor">Executor</a></span>
+      <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a></span>
+      <span class="line"><span class="f">resources?</span>: <a class="tr" href="#Resources">Resources</a></span>
+      <span class="sep">── or ③ loop type ──</span>
+      <span class="line"><span class="f">loop</span>: <a class="tr" href="#Loop">Loop</a></span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEVEL 3 ═══════════════════ -->
+<div class="level l3">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 3 — Execution (DAG, Task, Executor, Loop)
+  </div>
+  <div class="level-body">
+
+    <div class="type-card" id="DAG">
+      <span class="tn">DAG</span>
+      <span class="line"><span class="f">tasks</span>: [<a class="tr" href="#Task">Task</a>]<span class="v">+</span> <span class="c"># ≥1 task nodes</span></span>
+      <span class="line"><span class="f">entrypoints?</span>: <span class="kw">string</span> <span class="v">|</span> <span class="kw">[string]+</span> <span class="c"># omit → auto-infer</span></span>
+      <span class="line"><span class="f">continueOn?</span>: <a class="tr" href="#ContinueOn">ContinueOn</a> <span class="c"># DAG-level default</span></span>
+    </div>
+
+    <div class="type-card" id="Task">
+      <span class="tn">Task</span> <span class="c"># execution node in the graph</span>
+      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within parent DAG</span></span>
+      <span class="line"><span class="f">template</span>: <span class="kw">string</span> <span class="c"># referenced template name</span></span>
+      <span class="line"><span class="f">dependencies?</span> <span class="dv">= []</span>: <span class="kw">[string]</span> <span class="c"># prerequisite tasks</span></span>
+      <span class="line"><span class="f">arguments?</span>: <a class="tr" href="#Arguments">Arguments</a> <span class="c"># passed to template</span></span>
+      <span class="line"><span class="f">when?</span>: <span class="kw">string</span> <span class="c"># condition; skip if false</span></span>
+      <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
+      <span class="line"><span class="f">continueOn?</span>: <a class="tr" href="#ContinueOn">ContinueOn</a> <span class="c"># overrides DAG-level</span></span>
+      <span class="line"><span class="f">hooks?</span>: <a class="tr" href="#Hooks">Hooks</a></span>
+    </div>
+
+    <div class="type-card" id="Executor">
+      <span class="tn">Executor</span>
+      <span class="line"><span class="f">type</span>: <span class="v">"script" | "function" | "await"</span></span>
+      <span class="line"><span class="f">config</span>: <a class="tr" href="#ScriptConfig">ScriptConfig</a> <span class="v">|</span> <a class="tr" href="#FunctionConfig">FunctionConfig</a> <span class="v">|</span> <a class="tr" href="#AwaitConfig">AwaitConfig</a></span>
+    </div>
+
+    <div class="type-card" id="ScriptConfig">
+      <span class="tn">ScriptConfig</span> <span class="c"># executor type: script</span>
+      <span class="line"><span class="f">runtime</span>: <span class="kw">string</span> <span class="c"># e.g. "python3", "bash"</span></span>
+      <span class="line"><span class="f">source</span>: <span class="kw">string</span> <span class="c"># script source code</span></span>
+    </div>
+
+    <div class="type-card" id="FunctionConfig">
+      <span class="tn">FunctionConfig</span> <span class="c"># executor type: function</span>
+      <span class="line"><span class="f">name</span>: <span class="kw">string</span> <span class="c"># e.g. "sleep"</span></span>
+      <span class="line"><span class="f">arguments?</span>: <span class="kw">Map&lt;string, any&gt;</span></span>
+    </div>
+
+    <div class="type-card" id="AwaitConfig">
+      <span class="tn">AwaitConfig</span> <span class="c"># executor type: await</span>
+      <span class="line"><span class="f">message?</span>: <span class="kw">string</span> <span class="c"># {{...}} supported</span></span>
+      <span class="line c" style="padding-left:1.5rem;display:block"># pause &amp; wait for external signal via resume API</span>
+    </div>
+
+    <div class="type-card" id="Loop">
+      <span class="tn">Loop</span> <span class="c"># oneOf: doWhile, forEach(static), forEach(dynamic)</span>
+      <span class="line"><span class="f">body</span>: <a class="tr" href="#DAG">DAG</a> <span class="c"># embedded loop body</span></span>
+      <span class="line"><span class="f">maxIterations?</span> <span class="dv">= 100</span>: <span class="kw">int[1..10000]</span> <span class="c"># safety limit</span></span>
+      <span class="line"><span class="f">aggregate?</span>: <a class="tr" href="#Aggregate">Aggregate</a></span>
+      <span class="sep">── ① doWhile ──</span>
+      <span class="line"><span class="f">repeatCondition</span>: <span class="kw">string</span> <span class="c"># expr; repeat while true</span></span>
+      <span class="sep">── or ② forEach (static) ──</span>
+      <span class="line"><span class="f">items</span>: <span class="kw">[string|number|boolean|object]+</span></span>
+      <span class="line"><span class="f">concurrency?</span> <span class="dv">= 1</span>: <span class="kw">int[0..]</span> <span class="c"># 0=unlimited</span></span>
+      <span class="sep">── or ③ forEach (dynamic) ──</span>
+      <span class="line"><span class="f">itemsFrom</span>: <span class="kw">string</span> <span class="c"># template var → JSON array</span></span>
+      <span class="line"><span class="f">concurrency?</span> <span class="dv">= 1</span>: <span class="kw">int[0..]</span> <span class="c"># 0=unlimited</span></span>
+    </div>
+
+    <div class="type-card" id="Aggregate">
+      <span class="tn">Aggregate</span> <span class="c"># loop output aggregation</span>
+      <span class="line"><span class="f">strategy?</span> <span class="dv">= "last"</span>: <span class="v">"last" | "first" | "list" | "merge"</span></span>
+      <span class="line"><span class="f">parameters?</span>: <span class="kw">[string]</span> <span class="c"># which params; omit = all</span></span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEVEL 4 ═══════════════════ -->
+<div class="level l4">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 4 — Data Flow (Parameter, Artifact, I/O)
+  </div>
+  <div class="level-body">
+
+    <div class="type-card" id="Parameter">
+      <span class="tn">Parameter</span>
+      <span class="line"><span class="f">name</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">type?</span> <span class="dv">= "any"</span>: <span class="v">"string"|"number"|"integer"|"boolean"|"object"|"array"|"any"</span></span>
+      <span class="line"><span class="f">value?</span>: <a class="tr" href="#AnyValue">AnyValue</a></span>
+      <span class="line"><span class="f">default?</span>: <a class="tr" href="#AnyValue">AnyValue</a></span>
+      <span class="line"><span class="f">description?</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">enum?</span>: <span class="kw">[string | number]</span></span>
+      <span class="line"><span class="f">valueFrom?</span>: <a class="tr" href="#ValueFrom">ValueFrom</a></span>
+    </div>
+
+    <div class="type-card" id="Artifact">
+      <span class="tn">Artifact</span>
+      <span class="line"><span class="f">name</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">from?</span>: <span class="kw">string</span> <span class="c"># ref another task's artifact</span></span>
+      <span class="line"><span class="f">source?</span>: <a class="tr" href="#ArtifactSource">ArtifactSource</a></span>
+      <span class="line"><span class="f">archive?</span>: { <span class="f">type?</span> <span class="dv">= "tar.gz"</span>: <span class="v">"tar"|"tar.gz"|"zip"|"none"</span> }</span>
+    </div>
+
+    <div class="type-card" id="Arguments">
+      <span class="tn">Arguments</span> <span class="c"># passed at call site</span>
+      <span class="line"><span class="f">parameters?</span>: [<a class="tr" href="#Parameter">Parameter</a>]</span>
+      <span class="line"><span class="f">artifacts?</span>: [<a class="tr" href="#Artifact">Artifact</a>]</span>
+    </div>
+
+    <div class="type-card" id="Inputs">
+      <span class="tn">Inputs</span> <span class="c"># declared at template definition</span>
+      <span class="line"><span class="f">parameters?</span>: [<a class="tr" href="#Parameter">Parameter</a>]</span>
+      <span class="line"><span class="f">artifacts?</span>: [<a class="tr" href="#Artifact">Artifact</a>]</span>
+    </div>
+
+    <div class="type-card" id="Outputs">
+      <span class="tn">Outputs</span> <span class="c"># auto + user-declared</span>
+      <span class="line"><span class="ro">«readonly» </span><span class="f">phase?</span>: <a class="tr" href="#Phase">Phase</a> <span class="c"># engine auto-populated</span></span>
+      <span class="line"><span class="ro">«readonly» </span><span class="f">code?</span> <span class="dv">= 0</span>: <span class="kw">int</span> <span class="c"># 0=ok, 1=fail</span></span>
+      <span class="line"><span class="f">msg?</span>: <span class="kw">string</span> <span class="c"># human-readable message</span></span>
+      <span class="line"><span class="ro">«readonly» </span><span class="f">metrics?</span>: <a class="tr" href="#Metrics">Metrics</a></span>
+      <span class="line"><span class="ro">«readonly» </span><span class="f">progress?</span>: <span class="kw">string</span> <span class="c"># "N/M", e.g. "3/5"</span></span>
+      <span class="line"><span class="f">parameters?</span>: [<a class="tr" href="#Parameter">Parameter</a>]</span>
+      <span class="line"><span class="f">artifacts?</span>: [<a class="tr" href="#Artifact">Artifact</a>]</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEVEL 5 ═══════════════════ -->
+<div class="level l5">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 5 — Policies &amp; Hooks
+  </div>
+  <div class="level-body">
+
+    <div class="type-card" id="Retry">
+      <span class="tn">Retry</span>
+      <span class="line"><span class="f">limit?</span> <span class="dv">= 0</span>: <span class="kw">int[0..100]</span> <span class="c"># max retries</span></span>
+      <span class="line"><span class="f">backoff?</span>: <a class="tr" href="#Backoff">Backoff</a></span>
+      <span class="line"><span class="f">expression?</span>: <span class="kw">string</span> <span class="c"># custom retry condition</span></span>
+    </div>
+
+    <div class="type-card" id="Backoff">
+      <span class="tn">Backoff</span>
+      <span class="line"><span class="f">duration?</span> <span class="dv">= "1s"</span>: <a class="tr" href="#Duration">Duration</a> <span class="c"># initial wait</span></span>
+      <span class="line"><span class="f">factor?</span> <span class="dv">= 2</span>: <span class="kw">number[1..10]</span> <span class="c"># exponential factor</span></span>
+      <span class="line"><span class="f">maxDuration?</span> <span class="dv">= "1m"</span>: <a class="tr" href="#Duration">Duration</a> <span class="c"># cap</span></span>
+    </div>
+
+    <div class="type-card" id="ContinueOn">
+      <span class="tn">ContinueOn</span>
+      <span class="line"><span class="f">failed?</span> <span class="dv">= false</span>: <span class="kw">bool</span> <span class="c"># continue on failure</span></span>
+      <span class="line"><span class="f">error?</span> <span class="dv">= false</span>: <span class="kw">bool</span> <span class="c"># continue on error</span></span>
+      <span class="line"><span class="f">timeout?</span> <span class="dv">= false</span>: <span class="kw">bool</span> <span class="c"># continue on timeout</span></span>
+    </div>
+
+    <div class="type-card" id="Resources">
+      <span class="tn">Resources</span>
+      <span class="line"><span class="f">cpu?</span>: <span class="kw">string</span> <span class="v">|</span> <span class="kw">number</span> <span class="c"># e.g. "100m" or 1</span></span>
+      <span class="line"><span class="f">memory?</span>: <span class="kw">string</span> <span class="c"># e.g. "256Mi", "1Gi"</span></span>
+      <span class="line"><span class="f">gpu?</span>: <span class="kw">int[0..]</span></span>
+    </div>
+
+    <div class="type-card" id="PhaseConditions">
+      <span class="tn">PhaseConditions</span> <span class="c"># custom phase determination</span>
+      <span class="line"><span class="f">succeeded?</span>: <span class="kw">string</span> <span class="c"># expr → Succeeded</span></span>
+      <span class="line"><span class="f">failed?</span>: <span class="kw">string</span> <span class="c"># expr → Failed</span></span>
+      <span class="line"><span class="f">error?</span>: <span class="kw">string</span> <span class="c"># expr → Error</span></span>
+    </div>
+
+    <div class="type-card" id="Hooks">
+      <span class="tn">Hooks</span> <span class="c"># lifecycle hooks</span>
+      <span class="line"><span class="f">onStart?</span>: <a class="tr" href="#Hook">Hook</a> <span class="c"># workflow/task starts</span></span>
+      <span class="line"><span class="f">onSuccess?</span>: <a class="tr" href="#Hook">Hook</a> <span class="c"># succeeded</span></span>
+      <span class="line"><span class="f">onFailure?</span>: <a class="tr" href="#Hook">Hook</a> <span class="c"># business failure</span></span>
+      <span class="line"><span class="f">onError?</span>: <a class="tr" href="#Hook">Hook</a> <span class="c"># system error</span></span>
+      <span class="line"><span class="f">onExit?</span>: <a class="tr" href="#Hook">Hook</a> <span class="c"># always (exit)</span></span>
+    </div>
+
+    <div class="type-card" id="Hook">
+      <span class="tn">Hook</span>
+      <span class="line"><span class="f">template</span>: <span class="kw">string</span> <span class="c"># use {{hook.*}} inside</span></span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEVEL 6 ═══════════════════ -->
+<div class="level l6">
+  <div class="level-header" onclick="toggle(this)">
+    <span class="arrow">▼</span> Level 6 — Primitives
+  </div>
+  <div class="level-body">
+
+    <div class="type-card" id="Name">
+      <span class="tn">Name</span> <span class="kw">=</span> <span class="kw">string</span> <span class="c">/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/</span> <span class="c">[1..63]</span>
+      <span class="line c"># DNS-1123 compliant name</span>
+    </div>
+
+    <div class="type-card" id="Duration">
+      <span class="tn">Duration</span> <span class="kw">=</span> <span class="kw">string</span> <span class="c">/^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$/</span>
+      <span class="line c"># e.g. "30s", "5m", "2h", "1d", "1h30m"</span>
+    </div>
+
+    <div class="type-card" id="Phase">
+      <span class="tn">Phase</span> <span class="kw">=</span> <span class="v">"Pending"</span> <span class="c"># awaiting scheduling</span>
+      <span class="line"><span class="v">| "Running"</span> <span class="c"># executing</span></span>
+      <span class="line"><span class="v">| "Succeeded"</span> <span class="c"># success</span></span>
+      <span class="line"><span class="v">| "Failed"</span> <span class="c"># business failure</span></span>
+      <span class="line"><span class="v">| "Error"</span> <span class="c"># system error</span></span>
+      <span class="line"><span class="v">| "Skipped"</span> <span class="c"># when=false / dep failed</span></span>
+      <span class="line"><span class="v">| "Timeout"</span> <span class="c"># timed out</span></span>
+    </div>
+
+    <div class="type-card" id="AnyValue">
+      <span class="tn">AnyValue</span> <span class="kw">=</span> <span class="kw">string</span> <span class="v">|</span> <span class="kw">number</span> <span class="v">|</span> <span class="kw">boolean</span> <span class="v">|</span> <span class="kw">object</span> <span class="v">|</span> <span class="kw">array</span>
+    </div>
+
+    <div class="type-card" id="Metrics">
+      <span class="tn">Metrics</span> <span class="ro">«readonly»</span> <span class="c"># engine auto-populated</span>
+      <span class="line"><span class="f">startedAt?</span>: <span class="kw">string(date-time)</span></span>
+      <span class="line"><span class="f">finishedAt?</span>: <span class="kw">string(date-time)</span></span>
+      <span class="line"><span class="f">duration?</span>: <a class="tr" href="#Duration">Duration</a></span>
+      <span class="line"><span class="f">retries?</span> <span class="dv">= 0</span>: <span class="kw">int[0..]</span></span>
+    </div>
+
+    <div class="type-card" id="ValueFrom">
+      <span class="tn">ValueFrom</span> <span class="c"># pick one source</span>
+      <span class="line"><span class="f">path?</span>: <span class="kw">string</span> <span class="c"># read from file</span></span>
+      <span class="line"><span class="f">parameter?</span>: <span class="kw">string</span> <span class="c"># ref another param</span></span>
+      <span class="line"><span class="f">expression?</span>: <span class="kw">string</span> <span class="c"># computed via expr engine</span></span>
+      <span class="line"><span class="f">secretKeyRef?</span>: <a class="tr" href="#SecretKeyRef">SecretKeyRef</a></span>
+    </div>
+
+    <div class="type-card" id="SecretKeyRef">
+      <span class="tn">SecretKeyRef</span>
+      <span class="line"><span class="f">name</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">key</span>: <span class="kw">string</span></span>
+    </div>
+
+    <div class="type-card" id="ArtifactSource">
+      <span class="tn">ArtifactSource</span> <span class="c"># type + config pattern</span>
+      <span class="line"><span class="f">type</span>: <span class="kw">string</span> <span class="c"># "oss"|"local"|"http"|custom</span></span>
+      <span class="line"><span class="f">config</span>: <a class="tr" href="#OSSConfig">OSSConfig</a> <span class="v">|</span> <a class="tr" href="#LocalConfig">LocalConfig</a> <span class="v">|</span> <a class="tr" href="#HTTPConfig">HTTPConfig</a></span>
+    </div>
+
+    <div class="type-card" id="OSSConfig">
+      <span class="tn">OSSConfig</span> <span class="c"># type: "oss"</span>
+      <span class="line"><span class="f">bucket</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">key</span>: <span class="kw">string</span></span>
+      <span class="line"><span class="f">endpoint?</span>: <span class="kw">string</span></span>
+    </div>
+
+    <div class="type-card" id="LocalConfig">
+      <span class="tn">LocalConfig</span> <span class="c"># type: "local"</span>
+      <span class="line"><span class="f">path</span>: <span class="kw">string</span></span>
+    </div>
+
+    <div class="type-card" id="HTTPConfig">
+      <span class="tn">HTTPConfig</span> <span class="c"># type: "http"</span>
+      <span class="line"><span class="f">url</span>: <span class="kw">string(uri)</span></span>
+      <span class="line"><span class="f">headers?</span>: <span class="kw">Map&lt;string, string&gt;</span></span>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function toggle(header) {
+  header.classList.toggle('collapsed');
+  const body = header.nextElementSibling;
+  body.classList.toggle('hidden');
+}
+
+// Smooth scroll to anchor on type-ref click
+document.querySelectorAll('a.tr[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Expand parent level if collapsed
+      const levelBody = target.closest('.level-body');
+      if (levelBody && levelBody.classList.contains('hidden')) {
+        levelBody.classList.remove('hidden');
+        levelBody.previousElementSibling.classList.remove('collapsed');
+      }
+      // Flash highlight
+      target.style.transition = 'box-shadow 0.3s';
+      target.style.boxShadow = '0 0 12px color-mix(in srgb, var(--type-name) 50%, transparent)';
+      setTimeout(() => { target.style.boxShadow = ''; }, 1500);
+      // Update URL hash
+      history.pushState(null, '', a.getAttribute('href'));
+    }
+  });
+});
+
+// Handle direct hash navigation
+if (location.hash) {
+  const target = document.querySelector(location.hash);
+  if (target) {
+    const levelBody = target.closest('.level-body');
+    if (levelBody && levelBody.classList.contains('hidden')) {
+      levelBody.classList.remove('hidden');
+      levelBody.previousElementSibling.classList.remove('collapsed');
+    }
+    setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+  }
+}
+</script>
+
+</body>
+</html>
