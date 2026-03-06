@@ -210,20 +210,20 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
     </div>
 
     <div class="type-card wide" id="Template">
-      <span class="tn">Template</span> <span class="c"># oneOf: dag, executor, or loop</span>
+      <span class="tn">Template</span> <span class="c"># recursive unit of execution; oneOf: dag, executor, or loop</span>
       <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within templates[]</span></span>
       <span class="line"><span class="f">inputs?</span>: <a class="tr" href="#Inputs">Inputs</a></span>
       <span class="line"><span class="f">outputs?</span>: <a class="tr" href="#Outputs">Outputs</a></span>
       <span class="line"><span class="f">phaseConditions?</span>: <a class="tr" href="#PhaseConditions">PhaseConditions</a> <span class="c"># custom phase logic</span></span>
       <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
-      <span class="sep">── ① dag type ──</span>
-      <span class="line"><span class="f">dag</span>: <a class="tr" href="#DAG">DAG</a></span>
-      <span class="sep">── or ② executor type ──</span>
-      <span class="line"><span class="f">executor</span>: <a class="tr" href="#Executor">Executor</a></span>
+      <span class="sep">── ① dag type (container) ──</span>
+      <span class="line"><span class="f">dag</span>: <a class="tr" href="#DAG">DAG</a> <span class="c"># sub-graph; tasks ref other templates → recursive</span></span>
+      <span class="sep">── or ② executor type (leaf) ──</span>
+      <span class="line"><span class="f">executor</span>: <a class="tr" href="#Executor">Executor</a> <span class="c"># actual execution; recursion terminates here</span></span>
       <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a></span>
       <span class="line"><span class="f">resources?</span>: <a class="tr" href="#Resources">Resources</a></span>
-      <span class="sep">── or ③ loop type ──</span>
-      <span class="line"><span class="f">loop</span>: <a class="tr" href="#Loop">Loop</a></span>
+      <span class="sep">── or ③ loop type (container) ──</span>
+      <span class="line"><span class="f">loop</span>: <a class="tr" href="#Loop">Loop</a> <span class="c"># iterates over embedded dag body → recursive</span></span>
     </div>
 
   </div>

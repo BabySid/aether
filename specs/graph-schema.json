@@ -864,6 +864,7 @@
         },
         "template": {
             "type": "object",
+            "description": "Template is the unit of execution. Templates form a recursive tree: WorkflowSpec.entrypoint references a template by name; dag tasks reference templates by name; loop body is an embedded dag. Three mutually exclusive types: dag (container: sub-graph of tasks), executor (leaf: actual execution), loop (container: iterates over an embedded dag body)",
             "properties": {
                 "name": {
                     "$ref": "#/definitions/name",
@@ -911,7 +912,7 @@
             ],
             "oneOf": [
                 {
-                    "description": "dag type template: contains sub-graph definition",
+                    "description": "dag type template (container): contains a sub-graph of tasks. Each task references another template by name, forming a recursive tree. Execution terminates at executor (leaf) templates",
                     "required": [
                         "dag"
                     ],
@@ -931,7 +932,7 @@
                     }
                 },
                 {
-                    "description": "executor type template: executes concrete tasks",
+                    "description": "executor type template (leaf): the actual execution unit. Supports script (run code), function (call built-in/custom function), and await (pause for external signal). This is where the recursive template resolution terminates",
                     "required": [
                         "executor"
                     ],
@@ -951,7 +952,7 @@
                     }
                 },
                 {
-                    "description": "loop type template: iteratively executes sub-graph (conditional loop / data parallel)",
+                    "description": "loop type template (container): iteratively executes an embedded dag body (conditional loop / data parallel). The body dag's tasks reference other templates, continuing the recursive tree",
                     "required": [
                         "loop"
                     ],
