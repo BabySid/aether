@@ -64,12 +64,12 @@
         },
         "parameter": {
             "type": "object",
-            "description": "Parameter definition (declaration time)",
+            "description": "Unified parameter definition, used in three contexts: inputs (formal declaration), arguments (actual passing), outputs (output declaration). Applicable fields vary by context",
             "properties": {
                 "name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Parameter name"
+                    "description": "Parameter name, must be unique within scope"
                 },
                 "type": {
                     "type": "string",
@@ -83,7 +83,7 @@
                         "any"
                     ],
                     "default": "any",
-                    "description": "Parameter type declaration, used for SDK static type checking and engine runtime type conversion/validation"
+                    "description": "Parameter type for type checking and validation"
                 },
                 "value": {
                     "oneOf": [
@@ -103,7 +103,7 @@
                             "type": "array"
                         }
                     ],
-                    "description": "Parameter value"
+                    "description": "Parameter value, supports template variable references"
                 },
                 "default": {
                     "oneOf": [
@@ -123,11 +123,11 @@
                             "type": "array"
                         }
                     ],
-                    "description": "Default value"
+                    "description": "Default value when no argument is provided"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Parameter description"
+                    "description": "Human-readable parameter description"
                 },
                 "enum": {
                     "type": "array",
@@ -141,11 +141,11 @@
                             }
                         ]
                     },
-                    "description": "Allowed value enumeration"
+                    "description": "Allowed value enumeration for validation"
                 },
                 "valueFrom": {
                     "$ref": "#/definitions/valueFrom",
-                    "description": "Value source"
+                    "description": "Dynamic value source (path/expression/secret/parameter reference)"
                 }
             },
             "required": [
@@ -316,40 +316,42 @@
         },
         "arguments": {
             "type": "object",
+            "description": "Actual parameters passed at call site. Parameter names must match the target's inputs (by-name binding)",
             "properties": {
                 "parameters": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/parameter"
                     },
-                    "description": "Parameter list"
+                    "description": "Actual parameter list"
                 },
                 "artifacts": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/artifact"
                     },
-                    "description": "Artifact list"
+                    "description": "Actual artifact list"
                 }
             },
             "additionalProperties": false
         },
         "inputs": {
             "type": "object",
+            "description": "Formal parameter declarations on a template. Access via {{inputs.parameters.<name>}}",
             "properties": {
                 "parameters": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/parameter"
                     },
-                    "description": "Input parameter list"
+                    "description": "Formal parameter declarations. Parameters without 'default' are required"
                 },
                 "artifacts": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/artifact"
                     },
-                    "description": "Input artifact list"
+                    "description": "Input artifact declarations"
                 }
             },
             "additionalProperties": false
@@ -365,7 +367,7 @@
                 "Skipped",
                 "Timeout"
             ],
-            "description": "Execution phase: Pending=awaiting scheduling/dependency completion, Running=currently executing, Succeeded=execution successful, Failed=business failure (executor ran normally but result did not meet expectations), Error=system error (executor crash, network unreachable, OOM, etc.), Skipped=skipped (when=false / dependency failed without continueOn), Timeout=execution timed out (triggered by template.timeout / task.timeout)"
+            "description": "Execution phase: Pending (awaiting), Running, Succeeded, Failed (business failure), Error (system error), Skipped (condition false), Timeout"
         },
         "metrics": {
             "type": "object",
@@ -397,7 +399,7 @@
         },
         "outputs": {
             "type": "object",
-            "description": "Template outputs. Contains engine auto-populated execution status fields (phase/code/msg/metrics/progress, readOnly) and user-declared business outputs (parameters/artifacts)",
+            "description": "Template output declarations. Must be explicitly declared — if omitted, no outputs are exposed to the parent scope. Contains engine auto-populated status fields (readOnly) and user-declared business outputs (parameters/artifacts)",
             "properties": {
                 "phase": {
                     "$ref": "#/definitions/phase",
@@ -422,7 +424,7 @@
                     "type": "string",
                     "pattern": "^[0-9]+/[0-9]+$",
                     "readOnly": true,
-                    "description": "Execution progress, e.g. '3/5'. For graph nodes: completed tasks/total tasks; for loop nodes: completed iterations/total iterations (auto-populated by engine)"
+                    "description": "Execution progress, e.g. '3/5'. For DAG: completed tasks/total tasks; for Loop: completed iterations/total iterations (auto-populated by engine)"
                 },
                 "parameters": {
                     "type": "array",
@@ -491,17 +493,17 @@
                 "failed": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Whether to continue subsequent nodes when a node fails"
+                    "description": "Whether to continue subsequent tasks when this task fails"
                 },
                 "error": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Whether to continue subsequent nodes when a node errors"
+                    "description": "Whether to continue subsequent tasks when this task errors"
                 },
                 "timeout": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Whether to continue subsequent nodes when a node times out"
+                    "description": "Whether to continue subsequent tasks when this task times out"
                 }
             },
             "additionalProperties": false
@@ -624,26 +626,34 @@
         },
         "awaitConfig": {
             "type": "object",
-            "description": "External signal wait configuration (executor type: await). Pauses execution and waits for an external system to send a signal via the engine's resume API. Signal payload is automatically mapped to template outputs. Timeout is controlled by template.timeout; on timeout the phase becomes Timeout, and task.continueOn.timeout determines whether subsequent nodes continue",
+            "description": "External signal wait configuration. Pauses execution until an external signal is received",
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "Notification message with template variable support. Informs external systems that a task is waiting, e.g. 'Please approve content: {{inputs.parameters.content_url}}'"
+                    "description": "Notification message with template variable support"
                 }
             },
             "additionalProperties": false
         },
         "task": {
             "type": "object",
-            "description": "Execution node in the graph, the basic execution unit of graph/v1",
+            "description": "Unified execution unit. Either references a template by name or inlines an executor. Exactly one of template or executor must be set",
             "properties": {
                 "name": {
                     "$ref": "#/definitions/name",
-                    "description": "Node name, unique within its parent graph"
+                    "description": "Task name, unique within its parent DAG"
+                },
+                "inputs": {
+                    "$ref": "#/definitions/inputs",
+                    "description": "Template input declarations (when task is used as a standalone template)"
                 },
                 "template": {
                     "type": "string",
-                    "description": "Referenced template name"
+                    "description": "Referenced template name (DAG or Loop). Mutually exclusive with executor"
+                },
+                "executor": {
+                    "$ref": "#/definitions/executor",
+                    "description": "Inline executor definition. Mutually exclusive with template"
                 },
                 "dependencies": {
                     "type": "array",
@@ -651,38 +661,89 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "List of prerequisite task names"
+                    "description": "Prerequisite task names within the same DAG"
                 },
                 "arguments": {
                     "$ref": "#/definitions/arguments",
-                    "description": "Arguments passed to the template"
+                    "description": "Arguments passed to the referenced template's inputs"
                 },
                 "when": {
                     "type": "string",
-                    "description": "Condition expression; task executes only when true"
+                    "description": "Condition expression; task is skipped when false"
                 },
                 "timeout": {
                     "$ref": "#/definitions/duration",
-                    "description": "Node-level timeout"
+                    "description": "Task-level execution timeout"
+                },
+                "retry": {
+                    "$ref": "#/definitions/retry",
+                    "description": "Retry strategy. Falls back to workflowSpec.retry if not set"
                 },
                 "continueOn": {
                     "$ref": "#/definitions/continueOn",
-                    "description": "Continue-on-failure conditions"
+                    "description": "Continue-on-failure conditions. Overrides DAG-level continueOn"
+                },
+                "resources": {
+                    "$ref": "#/definitions/resources",
+                    "description": "Resource requirements for inline executor mode"
+                },
+                "phaseConditions": {
+                    "$ref": "#/definitions/phaseConditions",
+                    "description": "Custom phase determination conditions"
                 },
                 "hooks": {
                     "$ref": "#/definitions/hooks",
-                    "description": "Node-level lifecycle hooks for observability and auditing"
+                    "description": "Task-level lifecycle hooks"
+                },
+                "outputs": {
+                    "$ref": "#/definitions/outputs",
+                    "description": "Output declarations for inline executor mode. Not needed for template reference mode"
                 }
             },
             "required": [
-                "name",
-                "template"
+                "name"
+            ],
+            "oneOf": [
+                {
+                    "description": "Template reference mode: delegate to a DAG or Loop template by name",
+                    "required": [
+                        "template"
+                    ],
+                    "not": {
+                        "required": [
+                            "executor"
+                        ]
+                    }
+                },
+                {
+                    "description": "Inline executor mode: embed an executor definition directly for leaf execution",
+                    "required": [
+                        "executor"
+                    ],
+                    "not": {
+                        "required": [
+                            "template"
+                        ]
+                    }
+                }
             ],
             "additionalProperties": false
         },
         "dag": {
             "type": "object",
             "properties": {
+                "name": {
+                    "$ref": "#/definitions/name",
+                    "description": "Template name, unique within workflowSpec.templates"
+                },
+                "inputs": {
+                    "$ref": "#/definitions/inputs",
+                    "description": "Template input declarations. Access via {{inputs.parameters.<name>}}"
+                },
+                "outputs": {
+                    "$ref": "#/definitions/outputs",
+                    "description": "Template output declarations. If omitted, no outputs are exposed to parent scope"
+                },
                 "entrypoints": {
                     "oneOf": [
                         {
@@ -696,7 +757,7 @@
                             "minItems": 1
                         }
                     ],
-                    "description": "Graph entry nodes, can be a single name or array of names. Can be omitted; the engine automatically infers all nodes with no predecessors and starts them in parallel as entry points"
+                    "description": "Entry task name(s). If omitted, engine auto-infers tasks with no dependencies"
                 },
                 "tasks": {
                     "type": "array",
@@ -708,21 +769,42 @@
                 },
                 "continueOn": {
                     "$ref": "#/definitions/continueOn",
-                    "description": "DAG-level continue-on-failure policy (default), can be overridden by task.continueOn. When not set, all exceptions (failed/error/timeout) stop subsequent nodes"
+                    "description": "DAG-level continue-on-failure policy, can be overridden by task.continueOn"
+                },
+                "phaseConditions": {
+                    "$ref": "#/definitions/phaseConditions",
+                    "description": "Custom phase determination conditions"
+                },
+                "timeout": {
+                    "$ref": "#/definitions/duration",
+                    "description": "DAG execution timeout"
                 }
             },
             "required": [
+                "name",
                 "tasks"
             ],
             "additionalProperties": false
         },
         "loop": {
             "type": "object",
-            "description": "Loop node spec. Loop mode is implicitly determined by field presence: repeatCondition → conditional loop (doWhile semantics, body executes at least once); items/itemsFrom → data parallel (forEach semantics). Loop body is an embedded dag supporting arbitrary nesting",
+            "description": "Loop definition. Mode determined by field presence: repeatCondition → conditional loop (doWhile); items/itemsFrom → data parallel (forEach)",
             "properties": {
+                "name": {
+                    "$ref": "#/definitions/name",
+                    "description": "Template name, unique within workflowSpec.templates"
+                },
+                "inputs": {
+                    "$ref": "#/definitions/inputs",
+                    "description": "Template input declarations. Access via {{inputs.parameters.<name>}}"
+                },
+                "outputs": {
+                    "$ref": "#/definitions/outputs",
+                    "description": "Template output declarations. If omitted, no outputs are exposed to parent scope"
+                },
                 "repeatCondition": {
                     "type": "string",
-                    "description": "Loop repeat condition expression (conditional loop mode); evaluated after each body execution, repeats when true, exits loop when false"
+                    "description": "Repeat condition expression; evaluated after each iteration, loop continues when true"
                 },
                 "items": {
                     "type": "array",
@@ -746,31 +828,44 @@
                 },
                 "itemsFrom": {
                     "type": "string",
-                    "description": "Dynamic iteration list source for data parallel mode (template variable reference resolving to a JSON array), e.g. {{tasks.fetch-list.outputs.parameters.items}}; mutually exclusive with items"
+                    "description": "Dynamic iteration list source (template variable resolving to JSON array); mutually exclusive with items"
                 },
                 "concurrency": {
                     "type": "integer",
                     "minimum": 0,
                     "default": 1,
-                    "description": "Concurrency for data parallel mode: 1=serial (default), N=up to N concurrent iterations, 0=unlimited concurrency (all parallel)"
+                    "description": "Concurrency for data parallel: 1=serial (default), N=up to N concurrent, 0=unlimited"
                 },
                 "maxIterations": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 10000,
                     "default": 100,
-                    "description": "Maximum iteration limit to prevent infinite loops (applies to conditional loop mode; data parallel mode limit is determined by list length)"
+                    "description": "Maximum iteration limit to prevent infinite loops"
                 },
                 "body": {
-                    "$ref": "#/definitions/dag",
-                    "description": "Loop body as an embedded dag. Loop variables available inside: {{loop.item}} (current item, data parallel mode), {{loop.item.<field>}} (current item sub-field), {{loop.index}} (current index, 0-based, data parallel mode), {{loop.iteration}} (current round, 1-based), {{loop.count}} (total iterations, available only in outputs). Cross-layer references via {{tasks.<outer-node-path>.outputs...}}"
+                    "type": "string",
+                    "description": "Body template name (DAG, Loop, or Task type)"
+                },
+                "arguments": {
+                    "$ref": "#/definitions/arguments",
+                    "description": "Arguments passed to body template's inputs. Iterator variables and workflow globals are available in value expressions"
                 },
                 "aggregate": {
                     "$ref": "#/definitions/aggregate",
-                    "description": "Loop output aggregation strategy controlling how multi-iteration outputs are summarized into the loop node's final output"
+                    "description": "Output aggregation strategy for multi-iteration results"
+                },
+                "phaseConditions": {
+                    "$ref": "#/definitions/phaseConditions",
+                    "description": "Custom phase determination conditions"
+                },
+                "timeout": {
+                    "$ref": "#/definitions/duration",
+                    "description": "Loop execution timeout"
                 }
             },
             "required": [
+                "name",
                 "body"
             ],
             "oneOf": [
@@ -839,7 +934,7 @@
         },
         "aggregate": {
             "type": "object",
-            "description": "Output aggregation strategy for loop nodes",
+            "description": "Output aggregation strategy for loop templates",
             "properties": {
                 "strategy": {
                     "type": "string",
@@ -850,7 +945,7 @@
                         "merge"
                     ],
                     "default": "last",
-                    "description": "Aggregation strategy: last=use last iteration output, first=use first iteration output, list=collect all iteration outputs into an ordered array (by loop.index), merge=deep merge all iteration object outputs"
+                    "description": "Aggregation strategy: last=use last iteration output, first=use first iteration output, list=collect all iteration outputs into an ordered array (by iterator.index), merge=deep merge all iteration object outputs"
                 },
                 "parameters": {
                     "type": "array",
@@ -864,55 +959,24 @@
         },
         "template": {
             "type": "object",
-            "description": "Template is the unit of execution. Templates form a recursive tree: WorkflowSpec.entrypoint references a template by name; dag tasks reference templates by name; loop body is an embedded dag. Three mutually exclusive types: dag (container: sub-graph of tasks), executor (leaf: actual execution), loop (container: iterates over an embedded dag body)",
+            "description": "Reusable template union. Exactly one of dag/task/loop must be set. name, inputs, outputs are owned by each type",
             "properties": {
-                "name": {
-                    "$ref": "#/definitions/name",
-                    "description": "Template name, unique within workflowSpec.templates"
-                },
-                "inputs": {
-                    "$ref": "#/definitions/inputs",
-                    "description": "Template input definitions"
-                },
-                "outputs": {
-                    "$ref": "#/definitions/outputs",
-                    "description": "Template output definitions"
-                },
-                "phaseConditions": {
-                    "$ref": "#/definitions/phaseConditions",
-                    "description": "Custom phase determination conditions that decide outputs.phase value. After template execution, engine evaluates in error > failed > succeeded priority. Uses engine built-in default rules when not specified. Expression context varies by template type: executor(script) → result.exitCode/stdout/stderr; executor(function) → result.value/error; await → signal.payload; dag → dag.succeeded/failed/total; loop → loop.succeeded/failed/total"
-                },
                 "dag": {
                     "$ref": "#/definitions/dag",
-                    "description": "Graph execution definition (dag type template)"
+                    "description": "DAG type: contains a sub-graph of tasks. Carries its own name, inputs, outputs"
                 },
-                "executor": {
-                    "$ref": "#/definitions/executor",
-                    "description": "Executor configuration (executor type template)"
+                "task": {
+                    "$ref": "#/definitions/task",
+                    "description": "Task type: execution unit. Carries its own name, inputs, outputs"
                 },
                 "loop": {
                     "$ref": "#/definitions/loop",
-                    "description": "Loop execution configuration (loop type template)"
-                },
-                "timeout": {
-                    "$ref": "#/definitions/duration",
-                    "description": "Template execution timeout"
-                },
-                "retry": {
-                    "$ref": "#/definitions/retry",
-                    "description": "Retry strategy (applicable to executor type templates)"
-                },
-                "resources": {
-                    "$ref": "#/definitions/resources",
-                    "description": "Resource requirements (applicable to executor type templates)"
+                    "description": "Loop type: iteratively executes a body template. Carries its own name, inputs, outputs"
                 }
             },
-            "required": [
-                "name"
-            ],
             "oneOf": [
                 {
-                    "description": "dag type template (container): contains a sub-graph of tasks. Each task references another template by name, forming a recursive tree. Execution terminates at executor (leaf) templates",
+                    "description": "dag type template: contains a sub-graph of tasks forming a DAG",
                     "required": [
                         "dag"
                     ],
@@ -920,7 +984,7 @@
                         "anyOf": [
                             {
                                 "required": [
-                                    "executor"
+                                    "task"
                                 ]
                             },
                             {
@@ -932,9 +996,9 @@
                     }
                 },
                 {
-                    "description": "executor type template (leaf): the actual execution unit. Supports script (run code), function (call built-in/custom function), and await (pause for external signal). This is where the recursive template resolution terminates",
+                    "description": "task type template: the execution unit bridging orchestration to execution. Can inline an executor or reference DAG/Loop templates. Task→Task is forbidden",
                     "required": [
-                        "executor"
+                        "task"
                     ],
                     "not": {
                         "anyOf": [
@@ -952,7 +1016,7 @@
                     }
                 },
                 {
-                    "description": "loop type template (container): iteratively executes an embedded dag body (conditional loop / data parallel). The body dag's tasks reference other templates, continuing the recursive tree",
+                    "description": "loop type template: iteratively executes a body template referenced by name (DAG/Loop/Task). Supports conditional loop (doWhile) and data parallel (forEach)",
                     "required": [
                         "loop"
                     ],
@@ -965,7 +1029,7 @@
                             },
                             {
                                 "required": [
-                                    "executor"
+                                    "task"
                                 ]
                             }
                         ]
@@ -980,34 +1044,34 @@
             "properties": {
                 "onStart": {
                     "$ref": "#/definitions/hook",
-                    "description": "Triggered when workflow starts. Context: hook.workflow.name/id, hook.workflow.parameters.*"
+                    "description": "Triggered when workflow/task starts. Context: hook.workflow.name/id, hook.workflow.parameters.*"
                 },
                 "onSuccess": {
                     "$ref": "#/definitions/hook",
-                    "description": "Triggered when workflow succeeds. Context: hook.workflow.*, hook.workflow.outputs.*, hook.workflow.duration"
+                    "description": "Triggered when workflow/task succeeds. Context: hook.workflow.*, hook.workflow.outputs.*, hook.workflow.duration"
                 },
                 "onFailure": {
                     "$ref": "#/definitions/hook",
-                    "description": "Triggered on workflow business failure (node returned Failed). Context: hook.workflow.*, hook.trigger.node/phase/code/msg"
+                    "description": "Triggered on business failure (returned Failed). Context: hook.workflow.*, hook.trigger.node/phase/code/msg"
                 },
                 "onError": {
                     "$ref": "#/definitions/hook",
-                    "description": "Triggered on workflow system error (node returned Error). Context: hook.workflow.*, hook.trigger.node/phase/code/msg"
+                    "description": "Triggered on system error (returned Error). Context: hook.workflow.*, hook.trigger.node/phase/code/msg"
                 },
                 "onExit": {
                     "$ref": "#/definitions/hook",
-                    "description": "Triggered when workflow exits (regardless of success, failure, or error). Context: hook.workflow.*, hook.workflow.phase/duration"
+                    "description": "Triggered on exit (regardless of success, failure, or error). Context: hook.workflow.*, hook.workflow.phase/duration"
                 }
             },
             "additionalProperties": false
         },
         "hook": {
             "type": "object",
-            "description": "Hook definition. Parameters are automatically injected by engine with system context (hook.workflow.*, hook.trigger.*); no manual parameter passing needed",
+            "description": "Hook definition. Engine auto-injects system context (hook.workflow.*, hook.trigger.*)",
             "properties": {
                 "template": {
                     "type": "string",
-                    "description": "Hook template name; access engine auto-injected system context via {{hook.*}} within the template"
+                    "description": "Hook template name"
                 }
             },
             "required": [
@@ -1020,11 +1084,11 @@
             "properties": {
                 "entrypoint": {
                     "type": "string",
-                    "description": "Entry template name (name of a dag type template in the templates list)"
+                    "description": "Entry template name (DAG, Loop, or Task type). Use {{workflow.parameters.*}} to access global arguments"
                 },
                 "arguments": {
                     "$ref": "#/definitions/arguments",
-                    "description": "Workflow-level arguments, accessible via {{workflow.parameters.xxx}}"
+                    "description": "Workflow-level global arguments. Accessible from any depth via {{workflow.parameters.<name>}}"
                 },
                 "timeout": {
                     "$ref": "#/definitions/duration",
@@ -1033,7 +1097,7 @@
                 },
                 "retry": {
                     "$ref": "#/definitions/retry",
-                    "description": "Global retry strategy, used when individual templates have no retry configured"
+                    "description": "Global retry strategy fallback"
                 },
                 "priority": {
                     "type": "integer",
@@ -1047,7 +1111,7 @@
                     "minimum": 1,
                     "maximum": 10,
                     "default": 3,
-                    "description": "Maximum nesting depth (both dag and loop nesting count)"
+                    "description": "Maximum nesting depth for container templates (DAG/Loop). Inline executor does not count"
                 },
                 "templates": {
                     "type": "array",
@@ -1055,7 +1119,7 @@
                         "$ref": "#/definitions/template"
                     },
                     "minItems": 1,
-                    "description": "Template definition list containing dag, executor, await, and loop types"
+                    "description": "Template definition list"
                 },
                 "hooks": {
                     "$ref": "#/definitions/hooks",

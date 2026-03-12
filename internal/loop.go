@@ -43,26 +43,24 @@ func ExpandLoopIterations(ctx context.Context, loop *model.Loop, eval expr.Evalu
 	return nil, nil
 }
 
-// expandItems converts the raw items ([][]interface{}) into a list of parameter maps.
-// Each inner slice represents one iteration and can contain primitives or objects.
-func expandItems(items [][]interface{}, maxIterations int) []map[string]any {
+// expandItems converts the raw items ([]any) into a list of parameter maps.
+// Each item represents one iteration; objects are flattened, scalars use "item" key.
+func expandItems(items []any, maxIterations int) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
-	for i, row := range items {
+	for i, item := range items {
 		if maxIterations > 0 && i >= maxIterations {
 			break
 		}
 		params := make(map[string]any)
-		for j, val := range row {
-			switch v := val.(type) {
-			case map[string]interface{}:
-				// Object items are flattened into the params map
-				for k, vv := range v {
-					params[k] = vv
-				}
-			default:
-				// Scalar items use index-based keys
-				params[fmt.Sprintf("item_%d", j)] = v
+		switch v := item.(type) {
+		case map[string]interface{}:
+			// Object items are flattened into the params map
+			for k, vv := range v {
+				params[k] = vv
 			}
+		default:
+			// Scalar items use "item" key
+			params["item"] = v
 		}
 		params["item_index"] = i
 		result = append(result, params)
@@ -238,7 +236,7 @@ func (ld *LoopDispatcher) DispatchIterations(
 			WorkflowRunID: workflowRunID,
 			TaskName:      iterName,
 			Path:          iterName,
-			TemplateName:  ld.BodyTempl.Name,
+			TemplateName:  ld.BodyTempl.GetName(),
 			Status:        model.PhasePending,
 		}
 		if _, err := ld.Store.BatchCreateTaskRuns(ctx, []*store.TaskRun{iterRun}); err != nil {
@@ -268,22 +266,22 @@ func (ld *LoopDispatcher) DispatchIterations(
 			TaskRunID:     iterRunID,
 			WorkflowRunID: workflowRunID,
 			TaskName:      iterName,
-			TemplateName:  ld.BodyTempl.Name,
+			TemplateName:  ld.BodyTempl.GetName(),
 			Priority:      ld.Workflow.Spec.Priority,
 		}
-		if ld.BodyTempl.Executor != nil {
-			assignment.ExecutorType = ld.BodyTempl.Executor.Type
-			assignment.ExecutorConfig = ld.BodyTempl.Executor.Config
+		if exec := ld.BodyTempl.GetExecutor(); exec != nil {
+			assignment.ExecutorType = exec.Type
+			assignment.ExecutorConfig = exec.Config
 		}
-		if ld.BodyTempl.Timeout != "" {
-			assignment.Timeout = ld.BodyTempl.Timeout
+		if timeout := ld.BodyTempl.GetTimeout(); timeout != "" {
+			assignment.Timeout = timeout
 		}
 		if inputs != nil {
 			inputsJSON, _ := json.Marshal(inputs)
 			assignment.Inputs = inputsJSON
 		}
-		if ld.BodyTempl.Resources != nil {
-			resourcesJSON, _ := json.Marshal(ld.BodyTempl.Resources)
+		if res := ld.BodyTempl.GetResources(); res != nil {
+			resourcesJSON, _ := json.Marshal(res)
 			assignment.Resources = resourcesJSON
 		}
 

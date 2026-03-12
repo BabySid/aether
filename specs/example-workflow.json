@@ -1,0 +1,534 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "content-review-pipeline",
+        "namespace": "production",
+        "version": "1.0.0",
+        "labels": {
+            "team": "content",
+            "env": "prod"
+        },
+        "annotations": {
+            "description": "Bulk content review pipeline: fetch pending list → parallel review → aggregate report"
+        }
+    },
+    "spec": {
+        "entrypoint": "main-pipeline",
+        "arguments": {
+            "parameters": [
+                {
+                    "name": "api-endpoint",
+                    "type": "string",
+                    "value": "https://api.example.com/v2"
+                },
+                {
+                    "name": "batch-size",
+                    "type": "integer",
+                    "value": 50
+                },
+                {
+                    "name": "review-model",
+                    "type": "string",
+                    "value": "gpt-4"
+                }
+            ]
+        },
+        "timeout": "2h",
+        "retry": {
+            "limit": 2,
+            "backoff": {
+                "duration": "10s",
+                "factor": 2,
+                "maxDuration": "5m"
+            }
+        },
+        "maxNestedDepth": 3,
+        "hooks": {
+            "onFailure": {
+                "template": "notify-failure"
+            },
+            "onSuccess": {
+                "template": "notify-success"
+            }
+        },
+        "templates": [
+            {
+                "dag": {
+                    "name": "main-pipeline",
+                    "tasks": [
+                        {
+                            "name": "fetch-content-list",
+                            "executor": {
+                                "type": "script",
+                                "config": {
+                                    "runtime": "python3",
+                                    "source": "import requests\nresp = requests.get('{{workflow.parameters.api-endpoint}}/contents?limit={{workflow.parameters.batch-size}}')\nprint(resp.json())"
+                                }
+                            },
+                            "timeout": "5m",
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "result",
+                                        "type": "array",
+                                        "description": "Content ID list"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "batch-review",
+                            "template": "review-loop",
+                            "dependencies": [
+                                "fetch-content-list"
+                            ],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "content-list",
+                                        "valueFrom": {
+                                            "parameter": "tasks.fetch-content-list.outputs.parameters.result"
+                                        }
+                                    },
+                                    {
+                                        "name": "model",
+                                        "value": "{{workflow.parameters.review-model}}"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "generate-report",
+                            "template": "report-generator",
+                            "dependencies": [
+                                "batch-review"
+                            ],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "review-results",
+                                        "valueFrom": {
+                                            "parameter": "tasks.batch-review.outputs.parameters.results"
+                                        }
+                                    },
+                                    {
+                                        "name": "total-count",
+                                        "valueFrom": {
+                                            "parameter": "tasks.batch-review.outputs.parameters.total"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "notify-reviewer",
+                            "executor": {
+                                "type": "await",
+                                "config": {
+                                    "message": "Review report generated, please confirm: {{tasks.generate-report.outputs.parameters.report-url}}"
+                                }
+                            },
+                            "dependencies": [
+                                "generate-report"
+                            ],
+                            "timeout": "24h",
+                            "continueOn": {
+                                "timeout": true
+                            },
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "approved",
+                                        "type": "boolean",
+                                        "description": "Manual approval result (external signal payload)"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "publish-results",
+                            "executor": {
+                                "type": "function",
+                                "config": {
+                                    "name": "publish",
+                                    "arguments": {
+                                        "report-url": "{{tasks.generate-report.outputs.parameters.report-url}}",
+                                        "approved": "{{tasks.notify-reviewer.outputs.parameters.approved}}"
+                                    }
+                                }
+                            },
+                            "dependencies": [
+                                "notify-reviewer"
+                            ],
+                            "when": "{{tasks.notify-reviewer.outputs.parameters.approved}} == true",
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "status",
+                                        "type": "string",
+                                        "description": "Publish status"
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                    "continueOn": {
+                        "failed": false,
+                        "error": false,
+                        "timeout": false
+                    },
+                    "phaseConditions": {
+                        "succeeded": "dag.succeeded >= dag.total - 1",
+                        "failed": "dag.failed > 1"
+                    },
+                    "timeout": "3h",
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "report-url",
+                                "type": "string",
+                                "valueFrom": {
+                                    "parameter": "tasks.generate-report.outputs.parameters.report-url"
+                                }
+                            },
+                            {
+                                "name": "publish-status",
+                                "type": "string",
+                                "valueFrom": {
+                                    "parameter": "tasks.publish-results.outputs.parameters.status"
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "loop": {
+                    "name": "review-loop",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "content-list",
+                                "type": "array",
+                                "description": "Pending content ID list (JSON array)"
+                            },
+                            {
+                                "name": "model",
+                                "type": "string",
+                                "default": "gpt-4",
+                                "description": "LLM model used for review"
+                            }
+                        ]
+                    },
+                    "itemsFrom": "{{inputs.parameters.content-list}}",
+                    "concurrency": 5,
+                    "maxIterations": 1000,
+                    "body": "review-single-content",
+                    "arguments": {
+                        "parameters": [
+                            {
+                                "name": "content-id",
+                                "value": "{{iterator.item}}"
+                            },
+                            {
+                                "name": "index",
+                                "value": "{{iterator.index}}"
+                            },
+                            {
+                                "name": "model",
+                                "value": "{{inputs.parameters.model}}"
+                            }
+                        ]
+                    },
+                    "aggregate": {
+                        "strategy": "list",
+                        "parameters": [
+                            "review-result",
+                            "status"
+                        ]
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "results",
+                                "type": "array",
+                                "valueFrom": {
+                                    "parameter": "review-result"
+                                },
+                                "description": "All review results (ordered array)"
+                            },
+                            {
+                                "name": "total",
+                                "type": "integer",
+                                "valueFrom": {
+                                    "expression": "len(outputs.parameters.results)"
+                                },
+                                "description": "Total review count"
+                            }
+                        ]
+                    },
+                    "timeout": "1h"
+                }
+            },
+            {
+                "dag": {
+                    "name": "review-single-content",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "content-id",
+                                "type": "string"
+                            },
+                            {
+                                "name": "index",
+                                "type": "integer"
+                            },
+                            {
+                                "name": "model",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "tasks": [
+                        {
+                            "name": "fetch-detail",
+                            "executor": {
+                                "type": "script",
+                                "config": {
+                                    "runtime": "python3",
+                                    "source": "import requests\nresp = requests.get(f'{{workflow.parameters.api-endpoint}}/contents/{{inputs.parameters.content-id}}')\nprint(resp.json())"
+                                }
+                            },
+                            "timeout": "30s",
+                            "retry": {
+                                "limit": 3,
+                                "backoff": {
+                                    "duration": "2s",
+                                    "factor": 2
+                                }
+                            },
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "body",
+                                        "type": "object",
+                                        "description": "Content detail"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "ai-review",
+                            "executor": {
+                                "type": "function",
+                                "config": {
+                                    "name": "llm-review",
+                                    "arguments": {
+                                        "content": "{{tasks.fetch-detail.outputs.parameters.body}}",
+                                        "model": "{{inputs.parameters.model}}",
+                                        "prompt": "Please review the following content for compliance"
+                                    }
+                                }
+                            },
+                            "dependencies": [
+                                "fetch-detail"
+                            ],
+                            "timeout": "2m",
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "result",
+                                        "type": "object",
+                                        "description": "AI review result"
+                                    },
+                                    {
+                                        "name": "score",
+                                        "type": "number",
+                                        "description": "Review score"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "save-result",
+                            "executor": {
+                                "type": "function",
+                                "config": {
+                                    "name": "save-review",
+                                    "arguments": {
+                                        "content-id": "{{inputs.parameters.content-id}}",
+                                        "review": "{{tasks.ai-review.outputs.parameters.result}}",
+                                        "score": "{{tasks.ai-review.outputs.parameters.score}}"
+                                    }
+                                }
+                            },
+                            "dependencies": [
+                                "ai-review"
+                            ],
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "status",
+                                        "type": "string",
+                                        "description": "Save status"
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                    "phaseConditions": {
+                        "succeeded": "tasks.save-result.phase == 'Succeeded'",
+                        "failed": "tasks.ai-review.phase == 'Failed'"
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "review-result",
+                                "type": "object",
+                                "valueFrom": {
+                                    "parameter": "tasks.ai-review.outputs.parameters.result"
+                                }
+                            },
+                            {
+                                "name": "status",
+                                "type": "string",
+                                "valueFrom": {
+                                    "parameter": "tasks.save-result.outputs.parameters.status"
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "dag": {
+                    "name": "report-generator",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "review-results",
+                                "type": "array"
+                            },
+                            {
+                                "name": "total-count",
+                                "type": "integer"
+                            }
+                        ]
+                    },
+                    "tasks": [
+                        {
+                            "name": "analyze",
+                            "executor": {
+                                "type": "function",
+                                "config": {
+                                    "name": "analyze-reviews",
+                                    "arguments": {
+                                        "results": "{{inputs.parameters.review-results}}",
+                                        "total": "{{inputs.parameters.total-count}}"
+                                    }
+                                }
+                            },
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "stats",
+                                        "type": "object",
+                                        "description": "Review statistics analysis result"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "render",
+                            "executor": {
+                                "type": "script",
+                                "config": {
+                                    "runtime": "python3",
+                                    "source": "from report import render_html\nrender_html('{{tasks.analyze.outputs.parameters.stats}}')"
+                                }
+                            },
+                            "dependencies": [
+                                "analyze"
+                            ],
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "html",
+                                        "type": "string",
+                                        "description": "Rendered HTML report"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "upload",
+                            "executor": {
+                                "type": "function",
+                                "config": {
+                                    "name": "upload-report",
+                                    "arguments": {
+                                        "html": "{{tasks.render.outputs.parameters.html}}"
+                                    }
+                                }
+                            },
+                            "dependencies": [
+                                "render"
+                            ],
+                            "outputs": {
+                                "parameters": [
+                                    {
+                                        "name": "url",
+                                        "type": "string",
+                                        "description": "Uploaded report URL"
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "report-url",
+                                "type": "string",
+                                "valueFrom": {
+                                    "parameter": "tasks.upload.outputs.parameters.url"
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "notify-failure",
+                    "executor": {
+                        "type": "function",
+                        "config": {
+                            "name": "send-notification",
+                            "arguments": {
+                                "channel": "alert",
+                                "message": "Workflow {{hook.workflow.name}} failed: {{hook.trigger.msg}}"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "notify-success",
+                    "executor": {
+                        "type": "function",
+                        "config": {
+                            "name": "send-notification",
+                            "arguments": {
+                                "channel": "info",
+                                "message": "Workflow {{hook.workflow.name}} succeeded, duration: {{hook.workflow.duration}}"
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+    }
+}

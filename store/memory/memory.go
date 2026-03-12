@@ -11,6 +11,13 @@ import (
 	"github.com/BabySid/aether/store"
 )
 
+// parentKey builds the composite key for the parent index.
+func parentKey(workflowRunID, parentRunID uint64) uint64 {
+	// Simple composite: use workflow run ID shifted + parent run ID.
+	// For in-memory usage this is sufficient. Production stores use SQL WHERE clauses.
+	return workflowRunID*1_000_000_000 + parentRunID
+}
+
 // Store is an in-memory implementation of store.Store.
 // Safe for concurrent use. Intended for standalone / testing scenarios.
 type Store struct {
@@ -18,6 +25,7 @@ type Store struct {
 	workflowRuns map[uint64]*store.WorkflowRun
 	taskRuns     map[uint64]*store.TaskRun
 	taskIndex    map[uint64][]*store.TaskRun        // workflowRunID -> task runs
+	parentIndex  map[uint64][]*store.TaskRun        // parentKey(wfRunID, parentRunID) -> task runs
 	templates    map[string]*model.WorkflowTemplate // "namespace/name" -> template
 }
 
@@ -27,6 +35,7 @@ func New() *Store {
 		workflowRuns: make(map[uint64]*store.WorkflowRun),
 		taskRuns:     make(map[uint64]*store.TaskRun),
 		taskIndex:    make(map[uint64][]*store.TaskRun),
+		parentIndex:  make(map[uint64][]*store.TaskRun),
 		templates:    make(map[string]*model.WorkflowTemplate),
 	}
 }
@@ -127,6 +136,10 @@ func (m *Store) CreateTaskRun(_ context.Context, run *store.TaskRun) error {
 	cp.UpdatedAt = now
 	m.taskRuns[run.RunID] = &cp
 	m.taskIndex[run.WorkflowRunID] = append(m.taskIndex[run.WorkflowRunID], &cp)
+
+	pk := parentKey(run.WorkflowRunID, run.ParentRunID)
+	m.parentIndex[pk] = append(m.parentIndex[pk], &cp)
+
 	return nil
 }
 
@@ -148,6 +161,9 @@ func (m *Store) BatchCreateTaskRuns(_ context.Context, runs []*store.TaskRun) ([
 		cp.UpdatedAt = now
 		m.taskRuns[run.RunID] = &cp
 		m.taskIndex[run.WorkflowRunID] = append(m.taskIndex[run.WorkflowRunID], &cp)
+
+		pk := parentKey(run.WorkflowRunID, run.ParentRunID)
+		m.parentIndex[pk] = append(m.parentIndex[pk], &cp)
 
 		retCp := cp
 		created = append(created, &retCp)
@@ -184,8 +200,22 @@ func (m *Store) UpdateTaskRun(_ context.Context, run *store.TaskRun) error {
 	existing.Version++
 	existing.UpdatedAt = time.Now()
 
-	// Also update the indexed copy
+	// Also update the indexed copy in taskIndex
 	for _, tr := range m.taskIndex[existing.WorkflowRunID] {
+		if tr.RunID == run.RunID {
+			tr.Status = existing.Status
+			tr.Message = existing.Message
+			tr.Outputs = existing.Outputs
+			tr.Metrics = existing.Metrics
+			tr.Version = existing.Version
+			tr.UpdatedAt = existing.UpdatedAt
+			break
+		}
+	}
+
+	// Also update the indexed copy in parentIndex
+	pk := parentKey(existing.WorkflowRunID, existing.ParentRunID)
+	for _, tr := range m.parentIndex[pk] {
 		if tr.RunID == run.RunID {
 			tr.Status = existing.Status
 			tr.Message = existing.Message
@@ -205,6 +235,20 @@ func (m *Store) ListTaskRuns(_ context.Context, workflowRunID uint64) ([]*store.
 	defer m.mu.RUnlock()
 
 	runs := m.taskIndex[workflowRunID]
+	result := make([]*store.TaskRun, len(runs))
+	for i, r := range runs {
+		cp := *r
+		result[i] = &cp
+	}
+	return result, nil
+}
+
+func (m *Store) ListTaskRunsByParent(_ context.Context, workflowRunID uint64, parentRunID uint64) ([]*store.TaskRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	pk := parentKey(workflowRunID, parentRunID)
+	runs := m.parentIndex[pk]
 	result := make([]*store.TaskRun, len(runs))
 	for i, r := range runs {
 		cp := *r

@@ -6,27 +6,27 @@
 <title>Graph Workflow Protocol — Schema Reference</title>
 <style>
 :root {
-  --bg: #1e1e2e;
-  --surface: #282840;
-  --border: #3e3e5e;
-  --text: #cdd6f4;
-  --dim: #6c7086;
-  --type-name: #f5c2e7;
-  --field: #cdd6f4;
-  --type-ref: #89b4fa;
-  --value: #cba6f7;
-  --default-val: #f38ba8;
-  --comment: #6c7086;
-  --readonly: #a6e3a1;
-  --separator: #fab387;
-  --keyword: #89dceb;
-  --level0: #f5c2e7;
-  --level1: #cba6f7;
-  --level2: #89b4fa;
-  --level3: #74c7ec;
-  --level4: #94e2d5;
-  --level5: #a6e3a1;
-  --level6: #f9e2af;
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --border: #d8dce6;
+  --text: #2c3e50;
+  --dim: #8492a6;
+  --type-name: #c0392b;
+  --field: #2c3e50;
+  --type-ref: #2471a3;
+  --value: #7d3c98;
+  --default-val: #c0392b;
+  --comment: #8492a6;
+  --readonly: #1e8449;
+  --separator: #d35400;
+  --keyword: #117a65;
+  --level0: #c0392b;
+  --level1: #7d3c98;
+  --level2: #2471a3;
+  --level3: #1a7a8a;
+  --level4: #148f77;
+  --level5: #1e8449;
+  --level6: #b7950b;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -62,17 +62,18 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
 }
 .level-body.hidden { display: none; }
 
-.l0 .level-header { background: color-mix(in srgb, var(--level0) 12%, var(--surface)); color: var(--level0); }
-.l1 .level-header { background: color-mix(in srgb, var(--level1) 12%, var(--surface)); color: var(--level1); }
-.l2 .level-header { background: color-mix(in srgb, var(--level2) 12%, var(--surface)); color: var(--level2); }
-.l3 .level-header { background: color-mix(in srgb, var(--level3) 12%, var(--surface)); color: var(--level3); }
-.l4 .level-header { background: color-mix(in srgb, var(--level4) 12%, var(--surface)); color: var(--level4); }
-.l5 .level-header { background: color-mix(in srgb, var(--level5) 12%, var(--surface)); color: var(--level5); }
-.l6 .level-header { background: color-mix(in srgb, var(--level6) 12%, var(--surface)); color: var(--level6); }
+.l0 .level-header { background: color-mix(in srgb, var(--level0) 10%, var(--surface)); color: var(--level0); }
+.l1 .level-header { background: color-mix(in srgb, var(--level1) 10%, var(--surface)); color: var(--level1); }
+.l2 .level-header { background: color-mix(in srgb, var(--level2) 10%, var(--surface)); color: var(--level2); }
+.l3 .level-header { background: color-mix(in srgb, var(--level3) 10%, var(--surface)); color: var(--level3); }
+.l4 .level-header { background: color-mix(in srgb, var(--level4) 10%, var(--surface)); color: var(--level4); }
+.l5 .level-header { background: color-mix(in srgb, var(--level5) 10%, var(--surface)); color: var(--level5); }
+.l6 .level-header { background: color-mix(in srgb, var(--level6) 10%, var(--surface)); color: var(--level6); }
 
 .type-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   padding: 0.7rem 0.9rem; font-size: 0.8rem; overflow-x: auto;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 .type-card:target { border-color: var(--type-name); box-shadow: 0 0 8px color-mix(in srgb, var(--type-name) 30%, transparent); }
 .type-card.wide { grid-column: 1 / -1; }
@@ -177,16 +178,16 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
     <div class="type-card wide" id="WorkflowSpec">
       <span class="tn">WorkflowSpec</span> <span class="c"># oneOf: inline or ref</span>
       <span class="sep">── ① inline ──</span>
-      <span class="line"><span class="f">entrypoint</span>: <span class="kw">string</span> <span class="c"># entry template name (dag type)</span></span>
+      <span class="line"><span class="f">entrypoint</span>: <span class="kw">string</span> <span class="c"># entry template name (DAG|Loop|Task)</span></span>
       <span class="line"><span class="f">templates</span>: [<a class="tr" href="#Template">Template</a>]<span class="v">+</span> <span class="c"># ≥1 template definitions</span></span>
       <span class="sep">── or ② ref ──</span>
       <span class="line"><span class="f">workflowTemplateRef</span>: <a class="tr" href="#WorkflowTemplateRef">WorkflowTemplateRef</a></span>
       <span class="sep">── common (both modes) ──</span>
       <span class="line"><span class="f">arguments?</span>: <a class="tr" href="#Arguments">Arguments</a> <span class="c"># {{workflow.parameters.xxx}}</span></span>
       <span class="line"><span class="f">timeout?</span> <span class="dv">= "1h"</span>: <a class="tr" href="#Duration">Duration</a> <span class="c"># global timeout</span></span>
-      <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a> <span class="c"># global fallback retry</span></span>
+      <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a> <span class="c"># global fallback for tasks</span></span>
       <span class="line"><span class="f">priority?</span> <span class="dv">= 500</span>: <span class="kw">int[0..1000]</span> <span class="c"># higher = more urgent</span></span>
-      <span class="line"><span class="f">maxNestedDepth?</span> <span class="dv">= 3</span>: <span class="kw">int[1..10]</span> <span class="c"># dag/loop nesting limit</span></span>
+      <span class="line"><span class="f">maxNestedDepth?</span> <span class="dv">= 3</span>: <span class="kw">int[1..10]</span> <span class="c"># DAG/Loop nesting limit; task(executor) not counted</span></span>
       <span class="line"><span class="f">hooks?</span>: <a class="tr" href="#Hooks">Hooks</a> <span class="c"># workflow lifecycle hooks</span></span>
     </div>
 
@@ -210,20 +211,13 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
     </div>
 
     <div class="type-card wide" id="Template">
-      <span class="tn">Template</span> <span class="c"># recursive unit of execution; oneOf: dag, executor, or loop</span>
-      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within templates[]</span></span>
-      <span class="line"><span class="f">inputs?</span>: <a class="tr" href="#Inputs">Inputs</a></span>
-      <span class="line"><span class="f">outputs?</span>: <a class="tr" href="#Outputs">Outputs</a></span>
-      <span class="line"><span class="f">phaseConditions?</span>: <a class="tr" href="#PhaseConditions">PhaseConditions</a> <span class="c"># custom phase logic</span></span>
-      <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
-      <span class="sep">── ① dag type (container) ──</span>
-      <span class="line"><span class="f">dag</span>: <a class="tr" href="#DAG">DAG</a> <span class="c"># sub-graph; tasks ref other templates → recursive</span></span>
-      <span class="sep">── or ② executor type (leaf) ──</span>
-      <span class="line"><span class="f">executor</span>: <a class="tr" href="#Executor">Executor</a> <span class="c"># actual execution; recursion terminates here</span></span>
-      <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a></span>
-      <span class="line"><span class="f">resources?</span>: <a class="tr" href="#Resources">Resources</a></span>
-      <span class="sep">── or ③ loop type (container) ──</span>
-      <span class="line"><span class="f">loop</span>: <a class="tr" href="#Loop">Loop</a> <span class="c"># iterates over embedded dag body → recursive</span></span>
+      <span class="tn">Template</span> <span class="c"># pure union: exactly one of dag | task | loop. name/inputs/outputs owned by each type</span>
+      <span class="sep">── ① dag type (orchestration) ──</span>
+      <span class="line"><span class="f">dag</span>: <a class="tr" href="#DAG">DAG</a> <span class="c"># carries name, inputs, outputs + sub-graph</span></span>
+      <span class="sep">── or ② task type (execution) ──</span>
+      <span class="line"><span class="f">task</span>: <a class="tr" href="#Task">Task</a> <span class="c"># carries name, inputs, outputs + executor</span></span>
+      <span class="sep">── or ③ loop type (orchestration) ──</span>
+      <span class="line"><span class="f">loop</span>: <a class="tr" href="#Loop">Loop</a> <span class="c"># carries name, inputs, outputs + iteration logic</span></span>
     </div>
 
   </div>
@@ -238,21 +232,35 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
 
     <div class="type-card" id="DAG">
       <span class="tn">DAG</span>
-      <span class="line"><span class="f">tasks</span>: [<a class="tr" href="#Task">Task</a>]<span class="v">+</span> <span class="c"># ≥1 task nodes</span></span>
+      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within templates[]</span></span>
+      <span class="line"><span class="f">inputs?</span>: <a class="tr" href="#Inputs">Inputs</a> <span class="c"># {{inputs.parameters.xxx}}</span></span>
+      <span class="line"><span class="f">outputs?</span>: <a class="tr" href="#Outputs">Outputs</a> <span class="c"># exposed to parent scope</span></span>
+      <span class="line"><span class="f">tasks</span>: [<a class="tr" href="#Task">Task</a>]<span class="v">+</span> <span class="c"># ≥1 tasks</span></span>
       <span class="line"><span class="f">entrypoints?</span>: <span class="kw">string</span> <span class="v">|</span> <span class="kw">[string]+</span> <span class="c"># omit → auto-infer</span></span>
       <span class="line"><span class="f">continueOn?</span>: <a class="tr" href="#ContinueOn">ContinueOn</a> <span class="c"># DAG-level default</span></span>
+      <span class="line"><span class="f">phaseConditions?</span>: <a class="tr" href="#PhaseConditions">PhaseConditions</a></span>
+      <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
     </div>
 
-    <div class="type-card" id="Task">
-      <span class="tn">Task</span> <span class="c"># execution node in the graph</span>
-      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within parent DAG</span></span>
-      <span class="line"><span class="f">template</span>: <span class="kw">string</span> <span class="c"># referenced template name</span></span>
-      <span class="line"><span class="f">dependencies?</span> <span class="dv">= []</span>: <span class="kw">[string]</span> <span class="c"># prerequisite tasks</span></span>
-      <span class="line"><span class="f">arguments?</span>: <a class="tr" href="#Arguments">Arguments</a> <span class="c"># passed to template</span></span>
+    <div class="type-card wide" id="Task">
+      <span class="tn">Task</span> <span class="c"># unified execution unit; oneOf: template ref or inline executor</span>
+      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within parent DAG (call site) or within templates[] (standalone)</span></span>
+      <span class="line"><span class="f">inputs?</span>: <a class="tr" href="#Inputs">Inputs</a> <span class="c"># formal params when used as standalone template; {{inputs.parameters.xxx}}</span></span>
+      <span class="sep">── ① template reference mode ──</span>
+      <span class="line"><span class="f">template</span>: <span class="kw">string</span> <span class="c"># ref DAG|Loop (not Task)</span></span>
+      <span class="line"><span class="f">arguments?</span>: <a class="tr" href="#Arguments">Arguments</a> <span class="c"># maps to target template's inputs</span></span>
+      <span class="sep">── or ② inline executor mode ──</span>
+      <span class="line"><span class="f">executor</span>: <a class="tr" href="#Executor">Executor</a> <span class="c"># inline execution</span></span>
+      <span class="line"><span class="f">resources?</span>: <a class="tr" href="#Resources">Resources</a> <span class="c"># only with inline executor</span></span>
+      <span class="sep">── common fields ──</span>
+      <span class="line"><span class="f">dependencies?</span> <span class="dv">= []</span>: <span class="kw">[string]</span> <span class="c"># prerequisite tasks (DAG context)</span></span>
       <span class="line"><span class="f">when?</span>: <span class="kw">string</span> <span class="c"># condition; skip if false</span></span>
       <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
+      <span class="line"><span class="f">retry?</span>: <a class="tr" href="#Retry">Retry</a></span>
       <span class="line"><span class="f">continueOn?</span>: <a class="tr" href="#ContinueOn">ContinueOn</a> <span class="c"># overrides DAG-level</span></span>
+      <span class="line"><span class="f">phaseConditions?</span>: <a class="tr" href="#PhaseConditions">PhaseConditions</a></span>
       <span class="line"><span class="f">hooks?</span>: <a class="tr" href="#Hooks">Hooks</a></span>
+      <span class="line"><span class="f">outputs?</span>: <a class="tr" href="#Outputs">Outputs</a> <span class="c"># executor outputs (inline mode) or standalone template outputs</span></span>
     </div>
 
     <div class="type-card" id="Executor">
@@ -281,9 +289,15 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
 
     <div class="type-card" id="Loop">
       <span class="tn">Loop</span> <span class="c"># oneOf: doWhile, forEach(static), forEach(dynamic)</span>
-      <span class="line"><span class="f">body</span>: <a class="tr" href="#DAG">DAG</a> <span class="c"># embedded loop body</span></span>
+      <span class="line"><span class="f">name</span>: <a class="tr" href="#Name">Name</a> <span class="c"># unique within templates[]</span></span>
+      <span class="line"><span class="f">inputs?</span>: <a class="tr" href="#Inputs">Inputs</a> <span class="c"># loop's own params; {{inputs.parameters.xxx}}</span></span>
+      <span class="line"><span class="f">outputs?</span>: <a class="tr" href="#Outputs">Outputs</a> <span class="c"># aggregated outputs exposed to parent scope</span></span>
+      <span class="line"><span class="f">body</span>: <span class="kw">string</span> <span class="c"># template name (DAG|Loop|Task)</span></span>
+      <span class="line"><span class="f">arguments?</span>: <a class="tr" href="#Arguments">Arguments</a> <span class="c"># pass to body template's inputs (distinct from loop's own inputs)</span></span>
       <span class="line"><span class="f">maxIterations?</span> <span class="dv">= 100</span>: <span class="kw">int[1..10000]</span> <span class="c"># safety limit</span></span>
       <span class="line"><span class="f">aggregate?</span>: <a class="tr" href="#Aggregate">Aggregate</a></span>
+      <span class="line"><span class="f">phaseConditions?</span>: <a class="tr" href="#PhaseConditions">PhaseConditions</a></span>
+      <span class="line"><span class="f">timeout?</span>: <a class="tr" href="#Duration">Duration</a></span>
       <span class="sep">── ① doWhile ──</span>
       <span class="line"><span class="f">repeatCondition</span>: <span class="kw">string</span> <span class="c"># expr; repeat while true</span></span>
       <span class="sep">── or ② forEach (static) ──</span>
@@ -330,13 +344,13 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
     </div>
 
     <div class="type-card" id="Arguments">
-      <span class="tn">Arguments</span> <span class="c"># passed at call site</span>
+      <span class="tn">Arguments</span> <span class="c"># passed at call site (实参)</span>
       <span class="line"><span class="f">parameters?</span>: [<a class="tr" href="#Parameter">Parameter</a>]</span>
       <span class="line"><span class="f">artifacts?</span>: [<a class="tr" href="#Artifact">Artifact</a>]</span>
     </div>
 
     <div class="type-card" id="Inputs">
-      <span class="tn">Inputs</span> <span class="c"># declared at template definition</span>
+      <span class="tn">Inputs</span> <span class="c"># declared at template definition (形参)</span>
       <span class="line"><span class="f">parameters?</span>: [<a class="tr" href="#Parameter">Parameter</a>]</span>
       <span class="line"><span class="f">artifacts?</span>: [<a class="tr" href="#Artifact">Artifact</a>]</span>
     </div>
@@ -363,7 +377,7 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
   <div class="level-body">
 
     <div class="type-card" id="Retry">
-      <span class="tn">Retry</span>
+      <span class="tn">Retry</span> <span class="c"># on tasks; DAG/Loop fallback via workflowSpec.retry</span>
       <span class="line"><span class="f">limit?</span> <span class="dv">= 0</span>: <span class="kw">int[0..100]</span> <span class="c"># max retries</span></span>
       <span class="line"><span class="f">backoff?</span>: <a class="tr" href="#Backoff">Backoff</a></span>
       <span class="line"><span class="f">expression?</span>: <span class="kw">string</span> <span class="c"># custom retry condition</span></span>
@@ -384,14 +398,14 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
     </div>
 
     <div class="type-card" id="Resources">
-      <span class="tn">Resources</span>
+      <span class="tn">Resources</span> <span class="c"># on task with inline executor</span>
       <span class="line"><span class="f">cpu?</span>: <span class="kw">string</span> <span class="v">|</span> <span class="kw">number</span> <span class="c"># e.g. "100m" or 1</span></span>
       <span class="line"><span class="f">memory?</span>: <span class="kw">string</span> <span class="c"># e.g. "256Mi", "1Gi"</span></span>
       <span class="line"><span class="f">gpu?</span>: <span class="kw">int[0..]</span></span>
     </div>
 
     <div class="type-card" id="PhaseConditions">
-      <span class="tn">PhaseConditions</span> <span class="c"># custom phase determination</span>
+      <span class="tn">PhaseConditions</span> <span class="c"># on DAG, Task, Loop</span>
       <span class="line"><span class="f">succeeded?</span>: <span class="kw">string</span> <span class="c"># expr → Succeeded</span></span>
       <span class="line"><span class="f">failed?</span>: <span class="kw">string</span> <span class="c"># expr → Failed</span></span>
       <span class="line"><span class="f">error?</span>: <span class="kw">string</span> <span class="c"># expr → Error</span></span>

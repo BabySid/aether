@@ -60,6 +60,12 @@ type TaskRunStore interface {
 
 	// ListTaskRuns returns all task runs for a given workflow run.
 	ListTaskRuns(ctx context.Context, workflowRunID uint64) ([]*TaskRun, error)
+
+	// ListTaskRunsByParent returns task runs that share the same parent container.
+	// parentRunID=0 returns top-level tasks (no parent container).
+	// This is the core query for scoped/hierarchical DAG scheduling:
+	// advanceScope uses it to find sibling tasks within the same scope.
+	ListTaskRunsByParent(ctx context.Context, workflowRunID uint64, parentRunID uint64) ([]*TaskRun, error)
 }
 
 // WorkflowTemplateStore manages external workflow template loading.
@@ -83,12 +89,22 @@ type WorkflowRun struct {
 }
 
 // TaskRun represents a persisted task execution.
+//
+// The ParentRunID field forms a tree of TaskRuns that mirrors the template
+// nesting structure (dag → task → dag → task → ...). This enables:
+//   - Scoped scheduling: advanceScope only looks at sibling TaskRuns
+//   - Variable isolation: BuildScopedEnv only exposes same-scope outputs
+//   - Upward propagation: when all children complete, parent is finalized
 type TaskRun struct {
 	RunID         uint64
 	WorkflowRunID uint64
-	TaskName      string // unique within a workflow DAG
-	Path          string // full path e.g. "main/sub-dag/task-a"
+	ParentRunID   uint64 // parent container TaskRun ID (0 = top-level scope)
+	Depth         int    // tree depth (0 = top-level), created as parent.Depth + 1
+	Scope         string // scope path, e.g. "B" / "B.loop[2]"
+	TaskName      string // task name within current scope (unique among siblings)
+	Path          string // full qualified path = Scope + "." + TaskName
 	TemplateName  string // referenced template name
+	TemplateType  string // "dag" / "task" / "loop"
 	Status        model.Phase
 	Message       string
 	Inputs        *model.Inputs

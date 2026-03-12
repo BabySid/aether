@@ -57,21 +57,15 @@ func New(opts ...Option) (*Engine, error) {
 // Submit parses, validates, and dispatches a workflow for execution.
 // Returns the workflow run ID. Non-blocking.
 //
-// All checks (marshal, fill defaults, validate, resolve entrypoint, find root tasks)
-// are performed before any state is persisted to Store.
+// All checks (marshal, fill defaults, validate, resolve entrypoint) are
+// performed before any state is persisted to Store.
 func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error) {
+	// 1. Nil check
 	if wf == nil {
 		return 0, fmt.Errorf("aether: %w: workflow must not be nil", ErrValidation)
 	}
 
-	// 1. Resolve WorkflowTemplateRef if present
-	if wf.Spec.WorkflowTemplateRef != nil {
-		if err := internal.ResolveWorkflowTemplateRef(ctx, wf, e.store); err != nil {
-			return 0, fmt.Errorf("aether: %w", err)
-		}
-	}
-
-	// 2. Marshal raw workflow JSON (immutable snapshot, after ref resolution)
+	// 2. Marshal raw workflow JSON (immutable snapshot)
 	rawJSON, err := json.Marshal(wf)
 	if err != nil {
 		return 0, fmt.Errorf("aether: marshal workflow: %w", err)
@@ -86,23 +80,20 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error)
 	}
 
 	// 5. Resolve entrypoint template
-	tmpl := internal.FindTemplate(wf, wf.Spec.Entrypoint)
-	if tmpl == nil {
+	entry := internal.FindTemplate(wf, wf.Spec.Entrypoint)
+	if entry == nil {
 		return 0, fmt.Errorf("aether: %w: entrypoint template %q not found", ErrValidation, wf.Spec.Entrypoint)
 	}
 
-	// 6. For DAG templates, find root tasks (pre-check before persisting)
-	var rootTasks []model.Task
-	if tmpl.DAG != nil {
-		rootTasks = internal.FindRootTasks(tmpl.DAG)
-		if len(rootTasks) == 0 {
-			return 0, fmt.Errorf("aether: %w: no root tasks found in DAG", ErrValidation)
-		}
+	// 6. Determine entrypoint template type
+	templateType := internal.ResolveTemplateType(entry)
+	if templateType == "" {
+		return 0, fmt.Errorf("aether: %w: entrypoint template %q has no dag/executor/loop", ErrValidation, wf.Spec.Entrypoint)
 	}
 
 	// --- All checks passed. Now persist and dispatch. ---
 
-	// 7. Generate workflow run ID and store
+	// 7. Generate workflow run ID and persist WorkflowRun
 	workflowRunID := e.idGen.Generate()
 	run := &store.WorkflowRun{
 		RunID:    workflowRunID,
@@ -113,21 +104,24 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error)
 		return 0, fmt.Errorf("aether: create workflow run: %w", err)
 	}
 
-	// 8. Fire onStart hook
-	internal.FireWorkflowHooks(ctx, e.hookNotifier, wf, workflowRunID, model.PhaseRunning)
-
-	// 9. For DAG templates, create TaskRuns and dispatch root tasks
-	if tmpl.DAG != nil {
-		if err := e.dispatchTasks(ctx, workflowRunID, rootTasks, tmpl.DAG, wf, nil); err != nil {
-			return 0, err
-		}
+	// 8. Create entry TaskRun (Pending, ParentRunID=0)
+	entryTaskRun := &store.TaskRun{
+		RunID:         e.idGen.Generate(),
+		WorkflowRunID: workflowRunID,
+		ParentRunID:   0,
+		Depth:         0,
+		TaskName:      wf.Spec.Entrypoint,
+		TemplateName:  wf.Spec.Entrypoint,
+		TemplateType:  templateType,
+		Status:        model.PhasePending,
+	}
+	if err := e.store.CreateTaskRun(ctx, entryTaskRun); err != nil {
+		return 0, fmt.Errorf("aether: create entry task run: %w", err)
 	}
 
-	// 10. For loop templates, expand and dispatch iterations
-	if tmpl.Loop != nil {
-		if err := e.handleLoopTemplate(ctx, workflowRunID, wf.Spec.Entrypoint, tmpl, wf, nil); err != nil {
-			return 0, err
-		}
+	// 9. Start scheduling via advanceScope
+	if err := e.advanceScope(ctx, workflowRunID, wf, 0); err != nil {
+		return 0, fmt.Errorf("aether: %w", err)
 	}
 
 	return workflowRunID, nil
@@ -218,8 +212,12 @@ func (e *Engine) Resume(ctx context.Context, workflowID uint64, taskID uint64, p
 		return fmt.Errorf("aether: update task run: %w", err)
 	}
 
-	// 4. Schedule next tasks
-	return e.scheduleNext(ctx, tr.WorkflowRunID)
+	// 4. Advance the scope this task belongs to
+	wf, err := e.loadWorkflow(ctx, tr.WorkflowRunID)
+	if err != nil {
+		return err
+	}
+	return e.advanceScope(ctx, tr.WorkflowRunID, wf, tr.ParentRunID)
 }
 
 // Cancel cancels a running workflow. Non-blocking.
@@ -270,14 +268,25 @@ func (e *Engine) Cancel(ctx context.Context, workflowID uint64) error {
 }
 
 // OnTaskCompleted is invoked when a task finishes execution.
-// It updates the task state, fires task hooks, progresses the DAG by computing
-// and dispatching the next ready tasks, and finalizes the workflow if all tasks are done.
+// It persists the result, fires task-level hooks, then re-evaluates the task's
+// scope to dispatch newly-unblocked tasks or finalize the workflow.
 //
-// Call sites:
-//   - Local broker: invoked directly via CompletionHandler callback
-//   - Distributed: called by the external consumer (MQ subscriber, HTTP handler, etc.)
+// # Call sites
+//
+//   - Local broker: invoked synchronously via the CompletionHandler callback
+//     immediately after the executor returns.
+//   - Distributed broker: called by the external consumer (MQ subscriber,
+//     HTTP webhook handler, etc.) when a remote worker reports its result.
+//
+// # Hook resolution limitation (TODO)
+//
+// Task hooks (onSuccess, onFailure, ...) are declared on the call-site task node
+// inside the parent DAG, not on the template itself. The correct approach is to
+// look up the task node from tr.ParentRunID's DAG. Currently we only look in the
+// entrypoint DAG, so hooks on tasks inside nested DAGs are silently missed.
+// This will be fixed once scope-aware task resolution is implemented.
 func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult) {
-	// 1. Update task run status in Store
+	// 1. Persist result: update Status, Message, and Outputs in Store.
 	tr, err := e.store.GetTaskRun(ctx, result.TaskRunID)
 	if err != nil {
 		return
@@ -288,24 +297,44 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	tr.Outputs = result.Outputs
 	_ = e.store.UpdateTaskRun(ctx, tr)
 
-	// 2. Fire task-level hooks
-	run, err := e.store.GetWorkflowRun(ctx, tr.WorkflowRunID)
+	// 2. Fire task-level hooks (e.g., onSuccess, onFailure).
+	//
+	// Hooks are declared on the DAG task node (call-site), not on the template.
+	// Example DAG task with a hook:
+	//   tasks:
+	//     - name: "review"
+	//       template: "review-task"
+	//       hooks:
+	//         onFailure: "notify-failure"   ← fires if this task fails
+	//
+	// TODO: look up the task from tr.ParentRunID's DAG template for correct
+	// nested-scope support. The current entrypoint-only lookup is a known gap.
+	wf, err := e.loadWorkflow(ctx, tr.WorkflowRunID)
 	if err != nil {
 		return
 	}
-
-	var wf model.Workflow
-	if err := json.Unmarshal(run.Workflow, &wf); err != nil {
-		return
-	}
-	internal.FillDefaults(&wf)
-
-	tmpl := internal.FindTemplate(&wf, wf.Spec.Entrypoint)
+	tmpl := internal.FindTemplate(wf, wf.Spec.Entrypoint)
 	if tmpl != nil && tmpl.DAG != nil {
 		task := internal.FindTask(tmpl.DAG, tr.TaskName)
 		internal.FireTaskHooks(ctx, e.hookNotifier, task, tr.WorkflowRunID, result.Phase)
 	}
 
-	// 3. Schedule next tasks
-	_ = e.scheduleNext(ctx, tr.WorkflowRunID)
+	// 3. Re-advance the scope this task belongs to.
+	// tr.ParentRunID identifies the scope (DAG/Loop container) that owns this task.
+	// advanceScope will find newly-ready tasks, or finalize the scope if all are done.
+	_ = e.advanceScope(ctx, tr.WorkflowRunID, wf, tr.ParentRunID)
+}
+
+// loadWorkflow loads and deserializes the workflow from a WorkflowRun.
+func (e *Engine) loadWorkflow(ctx context.Context, workflowRunID uint64) (*model.Workflow, error) {
+	run, err := e.store.GetWorkflowRun(ctx, workflowRunID)
+	if err != nil {
+		return nil, err
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(run.Workflow, &wf); err != nil {
+		return nil, err
+	}
+	internal.FillDefaults(&wf)
+	return &wf, nil
 }

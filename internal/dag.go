@@ -57,7 +57,7 @@ func HasCycle(dag *model.DAG) bool {
 // FindTemplate finds a template by name in the workflow.
 func FindTemplate(wf *model.Workflow, name string) *model.Template {
 	for i := range wf.Spec.Templates {
-		if wf.Spec.Templates[i].Name == name {
+		if wf.Spec.Templates[i].GetName() == name {
 			return &wf.Spec.Templates[i]
 		}
 	}
@@ -247,6 +247,10 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 
 // BuildTaskAssignment creates a TaskAssignment from a TaskRun, its template, and the task definition.
 // Merges task.arguments into template inputs for the "fat assignment".
+//
+// Preconditions (guaranteed by Validate at Submit time):
+//   - tmpl is non-nil (task.Template is required and references a valid template)
+//   - task is non-nil (TaskRun names match DAG task names)
 func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Template, task *model.Task, wf *model.Workflow) *broker.TaskAssignment {
 	assignment := &broker.TaskAssignment{
 		TaskRunID:     tr.RunID,
@@ -256,30 +260,28 @@ func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Te
 		Priority:      wf.Spec.Priority,
 	}
 
-	if tmpl != nil {
-		if tmpl.Executor != nil {
-			assignment.ExecutorType = tmpl.Executor.Type
-			assignment.ExecutorConfig = tmpl.Executor.Config
-		}
+	if exec := tmpl.GetExecutor(); exec != nil {
+		assignment.ExecutorType = exec.Type
+		assignment.ExecutorConfig = exec.Config
+	}
 
-		// Timeout: task-level overrides template-level
-		timeout := tmpl.Timeout
-		if task != nil && task.Timeout != "" {
-			timeout = task.Timeout
-		}
-		assignment.Timeout = timeout
+	// Timeout: task-level overrides template-level
+	timeout := tmpl.GetTimeout()
+	if task.Timeout != "" {
+		timeout = task.Timeout
+	}
+	assignment.Timeout = timeout
 
-		// Inputs: start with template inputs, merge task arguments on top
-		inputs := resolveInputs(tmpl.Inputs, task)
-		if inputs != nil {
-			inputsJSON, _ := json.Marshal(inputs)
-			assignment.Inputs = inputsJSON
-		}
+	// Inputs: start with template inputs, merge task arguments on top
+	inputs := resolveInputs(tmpl.GetInputs(), task)
+	if inputs != nil {
+		inputsJSON, _ := json.Marshal(inputs)
+		assignment.Inputs = inputsJSON
+	}
 
-		if tmpl.Resources != nil {
-			resourcesJSON, _ := json.Marshal(tmpl.Resources)
-			assignment.Resources = resourcesJSON
-		}
+	if res := tmpl.GetResources(); res != nil {
+		resourcesJSON, _ := json.Marshal(res)
+		assignment.Resources = resourcesJSON
 	}
 
 	return assignment
