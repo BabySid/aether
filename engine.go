@@ -269,9 +269,12 @@ func (e *Engine) Cancel(ctx context.Context, workflowID uint64) error {
 }
 
 // OnTaskStarted is invoked when a worker begins executing a task.
-// It transitions the task's ancestor containers (DAG/Loop) and the WorkflowRun
-// from Pending to Running, so that their Running state accurately reflects the
-// moment real work begins rather than the moment the task was dispatched.
+// It transitions the leaf task itself, its ancestor containers (DAG/Loop), and
+// the WorkflowRun from Pending to Running, so that their Running state accurately
+// reflects the moment real work begins rather than the moment the task was dispatched.
+//
+// Both the leaf task CAS and the ancestor walk use CAS to remain idempotent under
+// concurrent or duplicate invocations.
 //
 // # Call sites
 //
@@ -284,6 +287,10 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID uint64) {
 	if err != nil {
 		return
 	}
+	// 1. Transition the leaf task itself: Pending → Running.
+	// CAS ensures idempotency if OnTaskStarted is called more than once.
+	_, _ = e.store.UpdateTaskRunCAS(ctx, taskRunID, model.PhasePending, model.PhaseRunning, "")
+	// 2. Transition ancestor containers (DAG/Loop) and the WorkflowRun: Pending → Running.
 	_ = e.markAncestorsRunning(ctx, tr.WorkflowRunID, tr.ParentRunID)
 }
 
