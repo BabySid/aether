@@ -17,6 +17,8 @@ import (
 //
 // Every DAG/Loop container is a scope boundary. The tree mirrors template nesting:
 //
+// DAG example:
+//
 //	parentRunID=0  (virtual workflow root)
 //	└── main-dag   (RunID=10, type=DAG)  ← scope 10
 //	    ├── fetch  (RunID=11, type=Task)
@@ -30,6 +32,23 @@ import (
 // If all siblings in scope 10 are terminal, the loop aggregates their results into
 // "main-dag", sets parentRunID=0, and continues upward to the root scope where
 // finalizeWorkflow is called.
+//
+// Loop example:
+//
+//	parentRunID=0      (virtual workflow root)
+//	└── process-files  (RunID=20, type=Loop)  ← scope 20
+//	    ├── handle-file[0]  (RunID=21, type=Task)
+//	    ├── handle-file[1]  (RunID=22, type=Task)
+//	    └── handle-file[2]  (RunID=23, type=Task)
+//
+// advanceScope(startParentRunID=0) activates "process-files" (Loop container).
+// startLoopController expands items and creates iteration TaskRuns under scope 20.
+// advanceScope(startParentRunID=20) dispatches iteration 0 and 1 (concurrency=2).
+//
+// When iteration 0 completes, OnTaskCompleted calls advanceScope(startParentRunID=20).
+// trySpawnNextIterations detects a free slot and creates iteration 2.
+// Once all iterations are terminal, results are aggregated into "process-files"
+// and advanceScope walks up to parentRunID=0 to finalize the workflow.
 func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *model.Workflow, startParentRunID uint64) error {
 	parentRunID := startParentRunID
 
