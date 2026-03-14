@@ -1,0 +1,55 @@
+{
+    "apiVersion": "graph/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "batch-process",
+        "annotations": {
+            "description": "Loop example: process a static list of files with concurrency=2."
+        }
+    },
+    "spec": {
+        "entrypoint": "run-loop",
+        "templates": [
+            {
+                "loop": {
+                    "name": "run-loop",
+                    "items": ["report_jan.csv", "report_feb.csv", "report_mar.csv"],
+                    "concurrency": 2,
+                    "body": "process-file"
+                }
+            },
+            {
+                "task": {
+                    "name": "process-file",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "item",
+                                "type": "string"
+                            },
+                            {
+                                "name": "item_index",
+                                "type": "integer"
+                            }
+                        ]
+                    },
+                    "executor": {
+                        "type": "script",
+                        "config": {
+                            "runtime": "python3",
+                            "source": "print(f'Processing [{inputs.parameters.item_index}] {{inputs.parameters.item}}')"
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "status",
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

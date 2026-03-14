@@ -64,55 +64,90 @@ func FindTemplate(wf *model.Workflow, name string) *model.Template {
 	return nil
 }
 
-// FindRootTasks returns tasks with no dependencies (entry points of the DAG).
-func FindRootTasks(dag *model.DAG) []model.Task {
-	roots := make([]model.Task, 0)
-
-	if dag.Entrypoints != nil {
-		switch ep := dag.Entrypoints.(type) {
-		case string:
-			for _, task := range dag.Tasks {
-				if task.Name == ep {
-					roots = append(roots, task)
-					break
-				}
+// extractEntrypointNames returns the set of task names declared in dag.Entrypoints.
+// Returns nil if no Entrypoints is specified.
+func extractEntrypointNames(dag *model.DAG) map[string]bool {
+	if dag.Entrypoints == nil {
+		return nil
+	}
+	switch ep := dag.Entrypoints.(type) {
+	case string:
+		return map[string]bool{ep: true}
+	case []any:
+		names := make(map[string]bool, len(ep))
+		for _, v := range ep {
+			if s, ok := v.(string); ok {
+				names[s] = true
 			}
-			return roots
-		case []any:
-			epNames := make(map[string]bool)
-			for _, v := range ep {
-				if s, ok := v.(string); ok {
-					epNames[s] = true
-				}
-			}
-			for _, task := range dag.Tasks {
-				if epNames[task.Name] {
-					roots = append(roots, task)
-				}
-			}
-			return roots
 		}
+		return names
+	}
+	return nil
+}
+
+// computeReachable returns the set of all task names reachable from the given
+// entrypoint names by following the DAG edges forward (entrypoint → downstream).
+// If entrypoints is nil, all tasks are considered reachable.
+func computeReachable(dag *model.DAG, entrypoints map[string]bool) map[string]bool {
+	if entrypoints == nil {
+		return nil // nil means "all tasks"
 	}
 
+	// Build forward adjacency: dep → tasks that depend on dep
+	fwd := make(map[string][]string)
 	for _, task := range dag.Tasks {
-		if len(task.Dependencies) == 0 {
-			roots = append(roots, task)
+		for _, dep := range task.Dependencies {
+			fwd[dep] = append(fwd[dep], task.Name)
 		}
 	}
-	return roots
+
+	reachable := make(map[string]bool)
+	queue := make([]string, 0, len(entrypoints))
+	for name := range entrypoints {
+		if !reachable[name] {
+			reachable[name] = true
+			queue = append(queue, name)
+		}
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range fwd[cur] {
+			if !reachable[next] {
+				reachable[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return reachable
 }
 
 // FindReadyTasks finds tasks whose dependencies are all satisfied.
-// Takes into account continueOn policies at both task and DAG level.
+// ContinueOn is read from the upstream (dependency) task: if a task declares continueOn,
+// it allows its downstream tasks to proceed even when it ends in a non-success state.
 // Only returns tasks that haven't been created yet (not in existing task runs).
+// When dag.Entrypoints is set, only tasks reachable from those entrypoints are considered.
 func FindReadyTasks(dag *model.DAG, existingRuns []*store.TaskRun) []model.Task {
 	taskStatus := make(map[string]model.Phase)
 	for _, tr := range existingRuns {
 		taskStatus[tr.TaskName] = tr.Status
 	}
 
+	// Build a name→task index for quick dep lookup
+	taskByName := make(map[string]*model.Task, len(dag.Tasks))
+	for i := range dag.Tasks {
+		taskByName[dag.Tasks[i].Name] = &dag.Tasks[i]
+	}
+
+	reachable := computeReachable(dag, extractEntrypointNames(dag))
+
 	ready := make([]model.Task, 0)
 	for _, task := range dag.Tasks {
+		// Skip tasks outside the reachable subgraph (only when entrypoints are set)
+		if reachable != nil && !reachable[task.Name] {
+			continue
+		}
+
 		// Skip tasks that already have a TaskRun
 		if _, exists := taskStatus[task.Name]; exists {
 			continue
@@ -125,7 +160,12 @@ func FindReadyTasks(dag *model.DAG, existingRuns []*store.TaskRun) []model.Task 
 				allDepsReady = false
 				break
 			}
-			if !isDependencySatisfied(depStatus, task.ContinueOn, dag.ContinueOn) {
+			// ContinueOn is declared on the upstream dep task
+			var depTaskCO *model.ContinueOn
+			if depTask, ok := taskByName[dep]; ok {
+				depTaskCO = depTask.ContinueOn
+			}
+			if !isDependencySatisfied(depStatus, depTaskCO, dag.ContinueOn) {
 				allDepsReady = false
 				break
 			}
@@ -139,21 +179,22 @@ func FindReadyTasks(dag *model.DAG, existingRuns []*store.TaskRun) []model.Task 
 }
 
 // isDependencySatisfied checks whether a dependency's terminal status
-// is acceptable for the dependent task to proceed.
+// is acceptable for downstream tasks to proceed.
 //
 // A dependency is satisfied if:
 //   - Succeeded or Skipped (always OK)
-//   - Failed and continueOn.failed is true
-//   - Error and continueOn.error is true
-//   - Timeout and continueOn.timeout is true
+//   - Failed and depTask.continueOn.failed is true
+//   - Error and depTask.continueOn.error is true
+//   - Timeout and depTask.continueOn.timeout is true
 //
-// continueOn is resolved by merging task-level and DAG-level policies (task takes precedence).
-func isDependencySatisfied(depStatus model.Phase, taskCO, dagCO *model.ContinueOn) bool {
+// depTaskCO is the ContinueOn of the upstream (dependency) task.
+// dagCO is the DAG-level default; depTask-level takes precedence.
+func isDependencySatisfied(depStatus model.Phase, depTaskCO, dagCO *model.ContinueOn) bool {
 	if depStatus == model.PhaseSucceeded || depStatus == model.PhaseSkipped {
 		return true
 	}
 
-	co := mergeContinueOn(taskCO, dagCO)
+	co := mergeContinueOn(depTaskCO, dagCO)
 	if co == nil {
 		return false
 	}
@@ -245,29 +286,54 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 	return env
 }
 
-// BuildTaskAssignment creates a TaskAssignment from a TaskRun, its template, and the task definition.
-// Merges task.arguments into template inputs for the "fat assignment".
+// BuildTaskAssignment assembles a self-contained TaskAssignment that is passed to broker.Dispatch.
 //
-// Preconditions (guaranteed by Validate at Submit time):
-//   - tmpl is non-nil (task.Template is required and references a valid template)
-//   - task is non-nil (TaskRun names match DAG task names)
-func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Template, task *model.Task, wf *model.Workflow) *broker.TaskAssignment {
+// Call timing: tr is still in Pending state when this is called. This function only merges
+// information — it does not trigger any state transition. The state change Pending → Running
+// happens later, when the worker calls broker.StartTask after receiving the assignment.
+//
+// Three information sources are merged:
+//
+//   - tr    (TaskRun)  : runtime IDs (TaskRunID, WorkflowRunID), task/template name
+//   - tmpl  (Template) : definition defaults — executor, inputs, timeout, resources
+//   - task  (DAG node) : call-site overrides — task.Arguments overrides tmpl inputs defaults;
+//     task.Timeout overrides tmpl.Timeout
+//
+// Example — template defines timeout=10m and env=dev; DAG node overrides timeout=30s and env=prod:
+//
+//	tmpl.inputs    = [{name:"region", default:"us-east-1"}, {name:"env", default:"dev"}]
+//	tmpl.timeout   = "10m"
+//	task.arguments = [{name:"env", value:"prod"}]
+//	task.timeout   = "30s"
+//
+//	→ assignment.Timeout = "30s"                                        (task overrides tmpl)
+//	→ assignment.Inputs  = [{name:"region", default:"us-east-1"},       (tmpl default kept)
+//	                         {name:"env",    value:"prod"}]              (task override wins)
+//
+// task may be nil when:
+//   - ParentRunID == 0 (top-level task): no parent DAG node to look up.
+//   - Parent is a Loop: iterations are dispatched directly without a DAG task node.
+//
+// When task is nil, only template-level defaults (timeout, inputs, resources) apply.
+func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Template, task *model.Task, wf *model.Workflow) (*broker.TaskAssignment, error) {
+	exec := tmpl.GetExecutor()
+	if exec == nil {
+		return nil, fmt.Errorf("template %q has no executor: cannot build assignment for task %q", tmpl.GetName(), tr.TaskName)
+	}
+
 	assignment := &broker.TaskAssignment{
-		TaskRunID:     tr.RunID,
-		WorkflowRunID: workflowRunID,
-		TaskName:      tr.TaskName,
-		TemplateName:  tr.TemplateName,
-		Priority:      wf.Spec.Priority,
+		TaskRunID:      tr.RunID,
+		WorkflowRunID:  workflowRunID,
+		TaskName:       tr.TaskName,
+		TemplateName:   tr.TemplateName,
+		Priority:       wf.Spec.Priority,
+		ExecutorType:   exec.Type,
+		ExecutorConfig: exec.Config,
 	}
 
-	if exec := tmpl.GetExecutor(); exec != nil {
-		assignment.ExecutorType = exec.Type
-		assignment.ExecutorConfig = exec.Config
-	}
-
-	// Timeout: task-level overrides template-level
+	// Timeout: task-level overrides template-level (task may be nil)
 	timeout := tmpl.GetTimeout()
-	if task.Timeout != "" {
+	if task != nil && task.Timeout != "" {
 		timeout = task.Timeout
 	}
 	assignment.Timeout = timeout
@@ -284,7 +350,7 @@ func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Te
 		assignment.Resources = resourcesJSON
 	}
 
-	return assignment
+	return assignment, nil
 }
 
 // resolveInputs merges template inputs with task arguments.

@@ -98,7 +98,7 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error)
 	run := &store.WorkflowRun{
 		RunID:    workflowRunID,
 		Workflow: rawJSON,
-		Status:   model.PhaseRunning,
+		Status:   model.PhasePending,
 	}
 	if err := e.store.CreateWorkflowRun(ctx, run); err != nil {
 		return 0, fmt.Errorf("aether: create workflow run: %w", err)
@@ -110,6 +110,7 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error)
 		WorkflowRunID: workflowRunID,
 		ParentRunID:   0,
 		Depth:         0,
+		Scope:         "",
 		TaskName:      wf.Spec.Entrypoint,
 		TemplateName:  wf.Spec.Entrypoint,
 		TemplateType:  templateType,
@@ -157,7 +158,7 @@ func (e *Engine) Get(ctx context.Context, workflowID uint64) (*WorkflowExecution
 		exec.Tasks = append(exec.Tasks, TaskExecution{
 			TaskID:   tr.RunID,
 			Name:     tr.TaskName,
-			Path:     tr.Path,
+			Path:     tr.Scope + tr.TaskName,
 			Template: tr.TemplateName,
 			Phase:    tr.Status,
 			Metrics:  tr.Metrics,
@@ -265,6 +266,25 @@ func (e *Engine) Cancel(ctx context.Context, workflowID uint64) error {
 	}
 
 	return nil
+}
+
+// OnTaskStarted is invoked when a worker begins executing a task.
+// It transitions the task's ancestor containers (DAG/Loop) and the WorkflowRun
+// from Pending to Running, so that their Running state accurately reflects the
+// moment real work begins rather than the moment the task was dispatched.
+//
+// # Call sites
+//
+//   - Local broker: invoked synchronously via the StartHandler callback
+//     immediately before the executor starts.
+//   - Distributed broker: called by the external consumer (MQ subscriber,
+//     HTTP webhook handler, etc.) when a remote worker reports it has started.
+func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID uint64) {
+	tr, err := e.store.GetTaskRun(ctx, taskRunID)
+	if err != nil {
+		return
+	}
+	_ = e.markAncestorsRunning(ctx, tr.WorkflowRunID, tr.ParentRunID)
 }
 
 // OnTaskCompleted is invoked when a task finishes execution.

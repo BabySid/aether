@@ -49,7 +49,7 @@ type TaskRunStore interface {
 	// CreateTaskRun creates a single task run.
 	CreateTaskRun(ctx context.Context, run *TaskRun) error
 
-	// BatchCreateTaskRuns creates multiple task runs. Deduplicates by (workflowRunID, taskName).
+	// BatchCreateTaskRuns creates multiple task runs. Deduplicates by (workflowRunID, parentRunID, taskName).
 	BatchCreateTaskRuns(ctx context.Context, runs []*TaskRun) ([]*TaskRun, error)
 
 	// GetTaskRun retrieves a task run by ID.
@@ -100,9 +100,8 @@ type TaskRun struct {
 	WorkflowRunID uint64
 	ParentRunID   uint64 // parent container TaskRun ID (0 = top-level scope)
 	Depth         int    // tree depth (0 = top-level), created as parent.Depth + 1
-	Scope         string // scope path, e.g. "B" / "B.loop[2]"
+	Scope         string // direct-parent path segment, e.g. "main-pipeline/" or "batch-review.loop[0]/"
 	TaskName      string // task name within current scope (unique among siblings)
-	Path          string // full qualified path = Scope + "." + TaskName
 	TemplateName  string // referenced template name
 	TemplateType  string // "dag" / "task" / "loop"
 	Status        model.Phase

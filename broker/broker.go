@@ -39,6 +39,14 @@ type TaskBroker interface {
 	// when the context expires before a task becomes available.
 	FetchTask(ctx context.Context, workerID string) (*TaskAssignment, error)
 
+	// StartTask reports that a worker has begun executing a task.
+	// Must be called before any actual computation starts so that the engine
+	// can transition the task (and its ancestor containers) from Pending to Running.
+	// The implementation decides how to deliver this event to the engine:
+	//   - local: directly invokes the StartHandler
+	//   - distributed: publishes to MQ, the consumer calls engine.OnTaskStarted
+	StartTask(ctx context.Context, taskRunID uint64, workerID string) error
+
 	// Heartbeat reports that a worker is still alive and working on the task.
 	// Implementations should treat this as idempotent.
 	Heartbeat(ctx context.Context, taskRunID uint64, workerID string) error
@@ -55,6 +63,14 @@ type TaskBroker interface {
 	// Close releases broker resources and waits for in-flight tasks to drain.
 	Close() error
 }
+
+// StartHandler is the callback invoked when a task begins execution.
+// Engine's OnTaskStarted method satisfies this signature.
+//
+// This type is NOT part of the TaskBroker interface contract.
+// It is a convenience type used by implementations (e.g., local broker)
+// that need a direct callback mechanism.
+type StartHandler func(ctx context.Context, taskRunID uint64)
 
 // CompletionHandler is the callback invoked when a task finishes execution.
 // Engine's OnTaskCompleted method satisfies this signature.

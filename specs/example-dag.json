@@ -1,0 +1,149 @@
+{
+    "apiVersion": "graph/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "data-pipeline",
+        "annotations": {
+            "description": "DAG example: fetch data → transform → notify. 'notify' is skipped if transform fails."
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "arguments": {
+            "parameters": [
+                {
+                    "name": "source-url",
+                    "type": "string",
+                    "value": "https://data.example.com/records"
+                }
+            ]
+        },
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "fetch",
+                            "template": "http-fetch"
+                        },
+                        {
+                            "name": "transform",
+                            "template": "data-transform",
+                            "dependencies": ["fetch"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "raw",
+                                        "valueFrom": {
+                                            "parameter": "tasks.fetch.outputs.parameters.body"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "notify",
+                            "template": "send-alert",
+                            "dependencies": ["transform"],
+                            "when": "tasks.transform.phase == 'Succeeded'",
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "message",
+                                        "valueFrom": {
+                                            "parameter": "tasks.transform.outputs.parameters.summary"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "http-fetch",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "url",
+                                "type": "string",
+                                "valueFrom": {
+                                    "parameter": "workflow.arguments.parameters.source-url"
+                                }
+                            }
+                        ]
+                    },
+                    "executor": {
+                        "type": "script",
+                        "config": {
+                            "runtime": "python3",
+                            "source": "import requests\nprint(requests.get('{{inputs.parameters.url}}').text)"
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "body",
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "data-transform",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "raw",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "executor": {
+                        "type": "function",
+                        "config": {
+                            "name": "transform",
+                            "arguments": {
+                                "data": "{{inputs.parameters.raw}}"
+                            }
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "summary",
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "send-alert",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "message",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "executor": {
+                        "type": "function",
+                        "config": {
+                            "name": "alert",
+                            "arguments": {
+                                "msg": "{{inputs.parameters.message}}"
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+    }
+}

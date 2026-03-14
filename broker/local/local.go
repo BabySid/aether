@@ -22,8 +22,9 @@ import (
 
 // Broker executes tasks in-process using goroutines.
 type Broker struct {
-	registry *executor.Registry
-	handler  broker.CompletionHandler
+	registry     *executor.Registry
+	startHandler broker.StartHandler
+	handler      broker.CompletionHandler
 
 	mu      sync.Mutex
 	cancels map[uint64]context.CancelFunc // taskRunID → cancel
@@ -34,13 +35,16 @@ type Broker struct {
 // New creates a local Broker.
 //
 // reg is the executor registry for looking up executor plugins.
+// startHandler is called immediately before execution begins — typically engine.OnTaskStarted
+// captured via a closure. It signals the engine to transition ancestor containers to Running.
 // handler is called when a task completes — typically engine.OnTaskCompleted
 // captured via a closure.
-func New(reg *executor.Registry, handler broker.CompletionHandler) *Broker {
+func New(reg *executor.Registry, startHandler broker.StartHandler, handler broker.CompletionHandler) *Broker {
 	return &Broker{
-		registry: reg,
-		handler:  handler,
-		cancels:  make(map[uint64]context.CancelFunc),
+		registry:     reg,
+		startHandler: startHandler,
+		handler:      handler,
+		cancels:      make(map[uint64]context.CancelFunc),
 	}
 }
 
@@ -112,6 +116,13 @@ func (b *Broker) Dispatch(ctx context.Context, assignment *broker.TaskAssignment
 			}
 		}
 
+		// Notify the engine that execution is about to begin.
+		// This triggers Pending→Running transitions on ancestor containers and
+		// the WorkflowRun before any actual computation takes place.
+		if b.startHandler != nil {
+			b.startHandler(ctx, assignment.TaskRunID)
+		}
+
 		// Execute (retry is handled at a higher level or by the plugin itself)
 		result, err := plugin.Execute(taskCtx, req)
 
@@ -173,6 +184,16 @@ func (b *Broker) FetchTask(ctx context.Context, _ string) (*broker.TaskAssignmen
 
 // Heartbeat is a no-op in local mode.
 func (b *Broker) Heartbeat(_ context.Context, _ uint64, _ string) error {
+	return nil
+}
+
+// StartTask invokes the StartHandler directly.
+// In local mode, this is typically called internally by the Dispatch goroutine
+// immediately before execution. It can also be called externally if needed.
+func (b *Broker) StartTask(ctx context.Context, taskRunID uint64, _ string) error {
+	if b.startHandler != nil {
+		b.startHandler(ctx, taskRunID)
+	}
 	return nil
 }
 

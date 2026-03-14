@@ -20,6 +20,9 @@ func ParseDuration(s string) (time.Duration, error) {
 
 	// Try standard Go duration first
 	if d, err := time.ParseDuration(s); err == nil {
+		if d < 0 {
+			return 0, fmt.Errorf("invalid duration: %q (must be non-negative)", s)
+		}
 		return d, nil
 	}
 

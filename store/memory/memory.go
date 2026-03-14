@@ -151,8 +151,10 @@ func (m *Store) BatchCreateTaskRuns(_ context.Context, runs []*store.TaskRun) ([
 	created := make([]*store.TaskRun, 0, len(runs))
 
 	for _, run := range runs {
-		// Dedup by (workflowRunID, taskName)
-		if m.taskExistsLocked(run.WorkflowRunID, run.TaskName) {
+		// Dedup by (workflowRunID, parentRunID, taskName) — the natural unique key for a task
+		// within its scope. Using workflowRunID+taskName alone is insufficient: the same
+		// template name (e.g., loop body) can appear as sibling TaskRuns in different scopes.
+		if m.taskExistsLocked(run.WorkflowRunID, run.ParentRunID, run.TaskName) {
 			continue
 		}
 
@@ -284,10 +286,11 @@ func (m *Store) RegisterTemplate(tmpl *model.WorkflowTemplate) {
 	m.templates[key] = tmpl
 }
 
-// taskExistsLocked checks if a task run exists for the given workflow and task name.
+// taskExistsLocked checks if a task run exists for the given (workflowRunID, parentRunID, taskName) triple.
 // Must be called with m.mu held.
-func (m *Store) taskExistsLocked(workflowRunID uint64, taskName string) bool {
-	for _, tr := range m.taskIndex[workflowRunID] {
+func (m *Store) taskExistsLocked(workflowRunID, parentRunID uint64, taskName string) bool {
+	pk := parentKey(workflowRunID, parentRunID)
+	for _, tr := range m.parentIndex[pk] {
 		if tr.TaskName == taskName {
 			return true
 		}

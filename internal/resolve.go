@@ -1,3 +1,25 @@
+// resolve.go — parameter value resolution
+//
+// Responsibility: before a task is dispatched, bind concrete values to every
+// unresolved parameter in inputs.parameters and return a fully-bound Inputs copy.
+//
+// Resolution priority (resolveParameter):
+//  1. Explicit value (non-empty and not JSON null) → used as-is, no resolution
+//  2. valueFrom → resolved from one of four sources (see below)
+//     - if valueFrom fails and a default exists, silently fall back to default
+//     - if valueFrom fails and no default, return error
+//  3. default → fallback
+//  4. none of the above → value stays empty (validated downstream)
+//
+// Four valueFrom sources (resolveValueFrom):
+//   - path         read from a completed task's outputs
+//     format: tasks.<taskName>.outputs.parameters.<paramName>
+//   - parameter    look up a workflow-level argument by name (WfArgs)
+//   - expression   evaluate via ExprEvaluator; env is built by BuildTaskEnv
+//   - secretKeyRef fetch from SecretStore by name+key
+//
+// Call site: engine_sched.go dispatchLeafTask calls ResolveInputs before
+// handing a TaskAssignment to the broker.
 package internal
 
 import (
@@ -143,6 +165,20 @@ func resolveFromParameter(name string, rc *ResolveContext) (json.RawMessage, err
 }
 
 // resolveFromExpression evaluates an expression to resolve a value.
+//
+// The expression can reference sibling task outputs via dot-notation variables.
+// For example, given a completed task "score-task" that output {"result": 92}:
+//
+//	expression: `tasks.score-task.outputs.parameters.result > 80 ? "pass" : "fail"`
+//
+// Because expr.Evaluator is stateless, we must first build an env map that
+// exposes the current-scope TaskRuns as flat variables:
+//
+//	BuildTaskEnv(rc.TaskRuns) →
+//	  "tasks.score-task.phase"                          = "Succeeded"
+//	  "tasks.score-task.outputs.parameters.result"      = 92
+//
+// The evaluator then resolves the expression against that env.
 func resolveFromExpression(ctx context.Context, expression string, rc *ResolveContext) (json.RawMessage, error) {
 	if rc.Eval == nil {
 		return nil, fmt.Errorf("expression requires ExprEvaluator but none is configured")

@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 
-	"github.com/BabySid/aether/broker"
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
@@ -192,116 +190,59 @@ func aggregateQuorum(results []LoopIterationResult) (model.Phase, string, *model
 	return model.PhaseFailed, fmt.Sprintf("quorum not met: %d/%d succeeded", succeeded, len(results)), nil
 }
 
-// RunLoopItems executes loop iterations using the items/itemsFrom mode.
-// Dispatches iterations with concurrency control.
-// Returns when all iterations complete.
+// BuildRepeatEnv builds the expression evaluation environment for a repeatCondition check.
 //
-// This is called by the Engine when it encounters a loop template.
-// Each iteration creates a child TaskRun and dispatches it.
-type LoopDispatcher struct {
-	Store     store.Store
-	Broker    broker.TaskBroker
-	Eval      expr.Evaluator
-	IDGen     func() uint64
-	Workflow  *model.Workflow
-	BodyTempl *model.Template
+// Available keys:
+//
+//	iteration_index           → current (just-finished) iteration index (0-based)
+//	tasks.<bodyName>.phase    → phase of the last iteration's body run
+//	tasks.<bodyName>.code     → exit code (if outputs present)
+//	tasks.<bodyName>.msg      → message (if outputs present)
+//	tasks.<bodyName>.outputs.parameters.<name> → output parameters (if any)
+func BuildRepeatEnv(iterIndex int, lastRun *store.TaskRun) map[string]any {
+	env := map[string]any{
+		"iteration_index": iterIndex,
+	}
+	if lastRun == nil {
+		return env
+	}
+	prefix := "tasks." + lastRun.TaskName
+	env[prefix+".phase"] = string(lastRun.Status)
+	if lastRun.Outputs != nil {
+		env[prefix+".code"] = lastRun.Outputs.Code
+		env[prefix+".msg"] = lastRun.Outputs.Msg
+		for _, p := range lastRun.Outputs.Parameters {
+			var val any
+			if err := json.Unmarshal(p.Value, &val); err == nil {
+				env[prefix+".outputs.parameters."+p.Name] = val
+			} else {
+				env[prefix+".outputs.parameters."+p.Name] = string(p.Value)
+			}
+		}
+	}
+	return env
 }
 
-// DispatchIterations creates and dispatches TaskRuns for each loop iteration.
-// Returns the iteration TaskRun IDs.
-func (ld *LoopDispatcher) DispatchIterations(
-	ctx context.Context,
-	workflowRunID uint64,
-	parentTaskName string,
-	iterations []map[string]any,
-	concurrency int,
-) ([]uint64, error) {
-	if concurrency <= 0 {
-		concurrency = len(iterations) // unlimited
+// EvalRepeatCondition evaluates the repeatCondition expression.
+// Returns true if the loop should continue to the next iteration.
+// If eval is nil, returns false (stop the loop).
+func EvalRepeatCondition(ctx context.Context, condition string, eval expr.Evaluator, env map[string]any) (bool, error) {
+	if condition == "" {
+		return false, nil
 	}
-
-	taskRunIDs := make([]uint64, 0, len(iterations))
-	sem := make(chan struct{}, concurrency)
-	var mu sync.Mutex
-	var firstErr error
-
-	var wg sync.WaitGroup
-	for i, iterParams := range iterations {
-		iterName := fmt.Sprintf("%s[%d]", parentTaskName, i)
-
-		// Create iteration TaskRun
-		iterRunID := ld.IDGen()
-		iterRun := &store.TaskRun{
-			RunID:         iterRunID,
-			WorkflowRunID: workflowRunID,
-			TaskName:      iterName,
-			Path:          iterName,
-			TemplateName:  ld.BodyTempl.GetName(),
-			Status:        model.PhasePending,
-		}
-		if _, err := ld.Store.BatchCreateTaskRuns(ctx, []*store.TaskRun{iterRun}); err != nil {
-			return nil, fmt.Errorf("create iteration task run %s: %w", iterName, err)
-		}
-
-		mu.Lock()
-		taskRunIDs = append(taskRunIDs, iterRunID)
-		mu.Unlock()
-
-		// Build inputs from iteration params
-		var inputs *model.Inputs
-		if len(iterParams) > 0 {
-			params := make([]model.Parameter, 0, len(iterParams))
-			for k, v := range iterParams {
-				valJSON, _ := json.Marshal(v)
-				params = append(params, model.Parameter{
-					Name:  k,
-					Value: valJSON,
-				})
-			}
-			inputs = &model.Inputs{Parameters: params}
-		}
-
-		// Build assignment
-		assignment := &broker.TaskAssignment{
-			TaskRunID:     iterRunID,
-			WorkflowRunID: workflowRunID,
-			TaskName:      iterName,
-			TemplateName:  ld.BodyTempl.GetName(),
-			Priority:      ld.Workflow.Spec.Priority,
-		}
-		if exec := ld.BodyTempl.GetExecutor(); exec != nil {
-			assignment.ExecutorType = exec.Type
-			assignment.ExecutorConfig = exec.Config
-		}
-		if timeout := ld.BodyTempl.GetTimeout(); timeout != "" {
-			assignment.Timeout = timeout
-		}
-		if inputs != nil {
-			inputsJSON, _ := json.Marshal(inputs)
-			assignment.Inputs = inputsJSON
-		}
-		if res := ld.BodyTempl.GetResources(); res != nil {
-			resourcesJSON, _ := json.Marshal(res)
-			assignment.Resources = resourcesJSON
-		}
-
-		// Dispatch with concurrency control
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(a *broker.TaskAssignment) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if err := ld.Broker.Dispatch(ctx, a); err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
-				}
-				mu.Unlock()
-			}
-		}(assignment)
+	if eval == nil {
+		return false, nil
 	}
-
-	wg.Wait()
-	return taskRunIDs, firstErr
+	result, err := eval.Eval(ctx, condition, env)
+	if err != nil {
+		return false, fmt.Errorf("eval repeatCondition %q: %w", condition, err)
+	}
+	switch v := result.(type) {
+	case bool:
+		return v, nil
+	case string:
+		return v == "true", nil
+	default:
+		return false, fmt.Errorf("repeatCondition %q returned non-boolean: %v", condition, result)
+	}
 }
