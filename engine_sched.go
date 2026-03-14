@@ -631,7 +631,7 @@ func allTerminal(taskRuns []*store.TaskRun) bool {
 //	  check    (Task): executor=script, outputs=[status]
 //
 // Iteration 0 is created by startLoopController. When it finishes:
-//   - tryAdvanceRepeatLoop builds env={iteration_index:0, tasks.check.phase:"Succeeded", ...}
+//   - tryAdvanceRepeatLoop builds env={loop_iter.index:0, tasks.check.phase:"Succeeded", ...}
 //   - evaluates "tasks.check.outputs.parameters.status != 'done'"
 //   - if true → calls spawnRepeatIteration(loopTR, 1) → creates iteration-1 TaskRun, advances scope
 //   - if false → returns advanced=false → advanceScope aggregates all children and finalizes loop
@@ -676,7 +676,7 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID uint64,
 // a Loop container are terminal. It re-evaluates the repeatCondition using the last
 // iteration's outputs as the expression context:
 //
-//	env = { iteration_index: N-1,
+//	env = { loop_iter.index: N-1,
 //	        tasks.<body>.phase: "Succeeded",
 //	        tasks.<body>.outputs.parameters.<name>: <value>, ... }
 //

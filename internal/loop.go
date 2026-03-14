@@ -238,22 +238,25 @@ func aggregatePickOne(results []LoopIterationResult, idx int, paramFilter map[st
 }
 
 // aggregateList collects the values of each parameter across all iterations into
-// an ordered JSON array (by iteration index). Only parameters present in paramFilter
-// are included; if paramFilter is nil, all parameters found in any iteration are collected.
+// an ordered JSON array (by iteration index). Missing values are padded with null
+// so that all arrays have equal length (len(results)), enabling index-based alignment.
 //
-// Example (3 iterations, paramFilter=nil):
+// Only parameters in paramFilter are included; if paramFilter is nil, all parameters
+// found in any iteration are collected.
+//
+// Example (3 iterations, paramFilter=nil, iter[1] has no "code"):
 //
 //	iter[0]: {status:"ok",   code:0}
-//	iter[1]: {status:"fail", code:1}
-//	iter[2]: {status:"ok",   code:0}
+//	iter[1]: {status:"succ"}
+//	iter[2]: {status:"ok",   code:2}
 //
-//	→ {status:["ok","fail","ok"], code:[0,1,0]}
+//	→ {status:["ok","succ","ok"], code:[0,null,2]}
+//
+// All arrays are guaranteed to have length == len(results).
 func aggregateList(results []LoopIterationResult, paramFilter map[string]bool) (model.Phase, string, *model.Outputs) {
-	// Preserve insertion-order of parameter names across all iterations.
+	// Pass 1: discover all parameter names in insertion order.
 	order := make([]string, 0)
 	seen := make(map[string]bool)
-	collected := make(map[string][]json.RawMessage) // name → per-iteration values
-
 	for _, r := range results {
 		if r.Outputs == nil {
 			continue
@@ -266,12 +269,30 @@ func aggregateList(results []LoopIterationResult, paramFilter map[string]bool) (
 				seen[p.Name] = true
 				order = append(order, p.Name)
 			}
-			collected[p.Name] = append(collected[p.Name], p.Value)
 		}
 	}
 
 	if len(order) == 0 {
 		return model.PhaseSucceeded, "", nil
+	}
+
+	// Pass 2: for each iteration and each known parameter, collect value or null.
+	collected := make(map[string][]json.RawMessage, len(order))
+	for _, name := range order {
+		collected[name] = make([]json.RawMessage, len(results))
+		for i := range collected[name] {
+			collected[name][i] = json.RawMessage("null")
+		}
+	}
+	for i, r := range results {
+		if r.Outputs == nil {
+			continue
+		}
+		for _, p := range r.Outputs.Parameters {
+			if _, ok := collected[p.Name]; ok {
+				collected[p.Name][i] = p.Value
+			}
+		}
 	}
 
 	params := make([]model.Parameter, 0, len(order))
@@ -308,7 +329,7 @@ func filterParams(params []model.Parameter, paramFilter map[string]bool) []model
 //
 // Available keys:
 //
-//	iteration_index                                → 0-based index of the finished iteration
+//	loop_iter.index                                → 0-based index of the finished iteration
 //	tasks.<bodyName>.phase                         → phase string (e.g. "Succeeded", "Failed")
 //	tasks.<bodyName>.code                          → executor exit code (if Outputs != nil)
 //	tasks.<bodyName>.msg                           → executor message (if Outputs != nil)
@@ -323,7 +344,7 @@ func filterParams(params []model.Parameter, paramFilter map[string]bool) []model
 //
 //	BuildRepeatEnv(2, lastRun) →
 //	  {
-//	    "iteration_index":                          2,
+//	    "loop_iter.index":                          2,
 //	    "tasks.fetch.phase":                        "Failed",
 //	    "tasks.fetch.code":                         1,
 //	    "tasks.fetch.msg":                          "timeout",
@@ -334,7 +355,7 @@ func filterParams(params []model.Parameter, paramFilter map[string]bool) []model
 // iterIndex is the 0-based index of the iteration that just completed (nextIndex - 1).
 func BuildRepeatEnv(iterIndex int, lastRun *store.TaskRun) map[string]any {
 	env := map[string]any{
-		"iteration_index": iterIndex,
+		"loop_iter.index": iterIndex,
 	}
 	if lastRun == nil {
 		return env
@@ -366,12 +387,12 @@ func BuildRepeatEnv(iterIndex int, lastRun *store.TaskRun) map[string]any {
 // Example:
 //
 //	condition = "tasks.fetch.phase != 'Succeeded'"
-//	env       = {"tasks.fetch.phase": "Failed", "iteration_index": 0}
+//	env       = {"tasks.fetch.phase": "Failed", "loop_iter.index": 0}
 //
 //	→ true  (loop continues, spawnRepeatIteration is called for index 1)
 //
 //	condition = "tasks.fetch.phase != 'Succeeded'"
-//	env       = {"tasks.fetch.phase": "Succeeded", "iteration_index": 1}
+//	env       = {"tasks.fetch.phase": "Succeeded", "loop_iter.index": 1}
 //
 //	→ false (loop is done, advanceScope aggregates results and finalizes the container)
 //

@@ -186,7 +186,7 @@ func TestExpandLoopIterations_ItemsFrom(t *testing.T) {
 
 func TestExpandLoopIterations_RepeatCondition_ReturnsNil(t *testing.T) {
 	loop := &model.Loop{
-		RepeatCondition: "iteration_index < 5",
+		RepeatCondition: "loop_iter.index < 5",
 	}
 	result, err := ExpandLoopIterations(context.Background(), loop, nil, nil)
 	if err != nil {
@@ -407,15 +407,71 @@ func TestAggregateResults_List_NoOutputs(t *testing.T) {
 	}
 }
 
+func TestAggregateResults_List_MissingParamPaddedWithNull(t *testing.T) {
+	// iter[1] has no "code" → code array should be [0, null, 2]
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("ok")},
+				{Name: "code", Value: rawJSON(0)},
+			},
+		}},
+		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("succ")},
+				// no "code" — should be padded with null
+			},
+		}},
+		{Index: 2, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("ok")},
+				{Name: "code", Value: rawJSON(2)},
+			},
+		}},
+	}
+	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyList})
+	if phase != model.PhaseSucceeded {
+		t.Fatalf("expected Succeeded, got %v", phase)
+	}
+	if outputs == nil || len(outputs.Parameters) != 2 {
+		t.Fatalf("expected 2 parameters, got %v", outputs)
+	}
+	paramMap := map[string]json.RawMessage{}
+	for _, p := range outputs.Parameters {
+		paramMap[p.Name] = p.Value
+	}
+
+	// status: ["ok","succ","ok"] — length 3
+	var statuses []string
+	if err := json.Unmarshal(paramMap["status"], &statuses); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if len(statuses) != 3 || statuses[0] != "ok" || statuses[1] != "succ" || statuses[2] != "ok" {
+		t.Errorf("expected status=[ok,succ,ok], got %v", statuses)
+	}
+
+	// code: [0, null, 2] — length 3, index 1 must be null
+	var codes []any
+	if err := json.Unmarshal(paramMap["code"], &codes); err != nil {
+		t.Fatalf("unmarshal code: %v", err)
+	}
+	if len(codes) != 3 {
+		t.Fatalf("expected code array length 3, got %d", len(codes))
+	}
+	if codes[1] != nil {
+		t.Errorf("expected code[1]=null, got %v", codes[1])
+	}
+}
+
 // ---- BuildRepeatEnv ----
 
 func TestBuildRepeatEnv_NilLastRun(t *testing.T) {
 	env := BuildRepeatEnv(0, nil)
-	if env["iteration_index"] != 0 {
-		t.Errorf("expected iteration_index=0, got %v", env["iteration_index"])
+	if env["loop_iter.index"] != 0 {
+		t.Errorf("expected loop_iter.index=0, got %v", env["loop_iter.index"])
 	}
 	if len(env) != 1 {
-		t.Errorf("expected only iteration_index, got %v", env)
+		t.Errorf("expected only loop_iter.index, got %v", env)
 	}
 }
 
@@ -433,8 +489,8 @@ func TestBuildRepeatEnv_WithLastRun(t *testing.T) {
 	}
 	env := BuildRepeatEnv(2, lastRun)
 
-	if env["iteration_index"] != 2 {
-		t.Errorf("expected iteration_index=2, got %v", env["iteration_index"])
+	if env["loop_iter.index"] != 2 {
+		t.Errorf("expected loop_iter.index=2, got %v", env["loop_iter.index"])
 	}
 	if env["tasks.do-work.phase"] != string(model.PhaseSucceeded) {
 		t.Errorf("expected phase key, got %v", env["tasks.do-work.phase"])
@@ -457,7 +513,7 @@ func TestEvalRepeatCondition_EmptyCondition(t *testing.T) {
 }
 
 func TestEvalRepeatCondition_NilEvaluator(t *testing.T) {
-	ok, err := EvalRepeatCondition(context.Background(), "iteration_index < 5", nil, nil)
+	ok, err := EvalRepeatCondition(context.Background(), "loop_iter.index < 5", nil, nil)
 	if err != nil || ok {
 		t.Errorf("nil evaluator should return false, nil; got %v, %v", ok, err)
 	}
@@ -467,7 +523,7 @@ func TestEvalRepeatCondition_ReturnTrue(t *testing.T) {
 	eval := &mockEvaluator{fn: func(expr string, env map[string]any) (any, error) {
 		return true, nil
 	}}
-	ok, err := EvalRepeatCondition(context.Background(), "iteration_index < 3", eval, map[string]any{"iteration_index": 1})
+	ok, err := EvalRepeatCondition(context.Background(), "loop_iter.index < 3", eval, map[string]any{"loop_iter.index": 1})
 	if err != nil || !ok {
 		t.Errorf("expected true, nil; got %v, %v", ok, err)
 	}
@@ -477,7 +533,7 @@ func TestEvalRepeatCondition_ReturnFalse(t *testing.T) {
 	eval := &mockEvaluator{fn: func(expr string, env map[string]any) (any, error) {
 		return false, nil
 	}}
-	ok, err := EvalRepeatCondition(context.Background(), "iteration_index < 3", eval, map[string]any{"iteration_index": 3})
+	ok, err := EvalRepeatCondition(context.Background(), "loop_iter.index < 3", eval, map[string]any{"loop_iter.index": 3})
 	if err != nil || ok {
 		t.Errorf("expected false, nil; got %v, %v", ok, err)
 	}
@@ -520,8 +576,8 @@ func TestEvalRepeatCondition_IterationIndexInEnv(t *testing.T) {
 		return true, nil
 	}}
 	env := BuildRepeatEnv(5, nil)
-	_, _ = EvalRepeatCondition(context.Background(), "iteration_index < 10", eval, env)
-	if capturedEnv["iteration_index"] != 5 {
-		t.Errorf("expected iteration_index=5 in env, got %v", capturedEnv["iteration_index"])
+	_, _ = EvalRepeatCondition(context.Background(), "loop_iter.index < 10", eval, env)
+	if capturedEnv["loop_iter.index"] != 5 {
+		t.Errorf("expected loop_iter.index=5 in env, got %v", capturedEnv["loop_iter.index"])
 	}
 }
