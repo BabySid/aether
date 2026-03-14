@@ -80,7 +80,7 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 		}
 		params := make(map[string]any)
 		switch v := item.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			// Object items are flattened into the params map
 			for k, vv := range v {
 				params[k] = vv
@@ -100,7 +100,7 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 //
 // The expression is evaluated against env (which contains workflow arguments and
 // previously completed task outputs) and must resolve to one of:
-//   - []interface{}  — direct Go slice from the evaluator
+//   - []any  — direct Go slice from the evaluator
 //   - string         — a JSON-encoded array (e.g. output of a preceding task)
 //
 // Example (itemsFrom loop):
@@ -112,7 +112,7 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 //	env["tasks.list-files.outputs.parameters.files"] = `["a.txt","b.txt","c.txt"]`
 //
 //	expandItemsFrom evaluates the expression → JSON string
-//	  → json.Unmarshal → []interface{}{"a.txt","b.txt","c.txt"}
+//	  → json.Unmarshal → []any{"a.txt","b.txt","c.txt"}
 //	  → [{loop_iter.item:"a.txt", loop_iter.index:0}, {loop_iter.item:"b.txt", loop_iter.index:1}, ...]
 //
 // Called exclusively by ExpandLoopIterations when loop.ItemsFrom != "".
@@ -128,9 +128,9 @@ func expandItemsFrom(ctx context.Context, expression string, eval expr.Evaluator
 	}
 
 	// Try to convert the result to a list
-	var items []interface{}
+	var items []any
 	switch v := raw.(type) {
-	case []interface{}:
+	case []any:
 		items = v
 	case string:
 		// Try parsing as JSON array
@@ -148,7 +148,7 @@ func expandItemsFrom(ctx context.Context, expression string, eval expr.Evaluator
 		}
 		params := make(map[string]any)
 		switch v := item.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			for k, vv := range v {
 				params[k] = vv
 			}

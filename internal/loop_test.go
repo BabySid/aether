@@ -27,7 +27,7 @@ func TestExpandItems_Scalar(t *testing.T) {
 
 func TestExpandItems_Object(t *testing.T) {
 	items := []any{
-		map[string]interface{}{"bucket": "s3://b", "key": "c.csv"},
+		map[string]any{"bucket": "s3://b", "key": "c.csv"},
 	}
 	result := expandItems(items, 0)
 	if len(result) != 1 {
@@ -69,7 +69,7 @@ func TestExpandItems_MaxIterationsZeroMeansUnlimited(t *testing.T) {
 
 func TestExpandItemsFrom_GoSlice(t *testing.T) {
 	eval := &mockEvaluator{fn: func(expr string, env map[string]any) (any, error) {
-		return []interface{}{"x.txt", "y.txt"}, nil
+		return []any{"x.txt", "y.txt"}, nil
 	}}
 	result, err := expandItemsFrom(context.Background(), "expr", eval, nil, 0)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestExpandItemsFrom_InvalidJSONString(t *testing.T) {
 
 func TestExpandItemsFrom_MaxIterations(t *testing.T) {
 	eval := &mockEvaluator{fn: func(expr string, env map[string]any) (any, error) {
-		return []interface{}{"a", "b", "c", "d", "e"}, nil
+		return []any{"a", "b", "c", "d", "e"}, nil
 	}}
 	result, err := expandItemsFrom(context.Background(), "expr", eval, nil, 2)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestExpandLoopIterations_Items(t *testing.T) {
 
 func TestExpandLoopIterations_ItemsFrom(t *testing.T) {
 	eval := &mockEvaluator{fn: func(expr string, env map[string]any) (any, error) {
-		return []interface{}{"item-a", "item-b"}, nil
+		return []any{"item-a", "item-b"}, nil
 	}}
 	loop := &model.Loop{
 		ItemsFrom: "tasks.list.outputs.parameters.files",

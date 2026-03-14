@@ -33,9 +33,9 @@ type Metrics struct {
 
 // Resources defines compute resource requirements.
 type Resources struct {
-	CPU    interface{} `json:"cpu,omitempty"`    // string or number
-	Memory string      `json:"memory,omitempty"` // e.g. "512Mi"
-	GPU    string      `json:"gpu,omitempty"`
+	CPU    any    `json:"cpu,omitempty"`    // string or number
+	Memory string `json:"memory,omitempty"` // e.g. "512Mi"
+	GPU    string `json:"gpu,omitempty"`
 }
 
 // Retry defines the retry policy.
