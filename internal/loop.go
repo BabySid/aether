@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
@@ -82,9 +83,7 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 		switch v := item.(type) {
 		case map[string]any:
 			// Object items are flattened into the params map
-			for k, vv := range v {
-				params[k] = vv
-			}
+			maps.Copy(params, v)
 		default:
 			// Scalar items use the reserved "loop_iter.item" key
 			params["loop_iter.item"] = v
@@ -149,9 +148,7 @@ func expandItemsFrom(ctx context.Context, expression string, eval expr.Evaluator
 		params := make(map[string]any)
 		switch v := item.(type) {
 		case map[string]any:
-			for k, vv := range v {
-				params[k] = vv
-			}
+			maps.Copy(params, v)
 		default:
 			params["loop_iter.item"] = v
 		}
