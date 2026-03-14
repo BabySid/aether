@@ -230,6 +230,52 @@ func (m *Store) UpdateTaskRunCAS(_ context.Context, taskRunID uint64, expected, 
 	return true, nil
 }
 
+func (m *Store) CompleteTaskRun(_ context.Context, taskRunID uint64, phase model.Phase, msg string, outputs *model.Outputs, metrics *model.Metrics) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, ok := m.taskRuns[taskRunID]
+	if !ok {
+		return false, fmt.Errorf("task run %d: %w", taskRunID, store.ErrNotFound)
+	}
+	if existing.Status != model.PhaseRunning {
+		// Duplicate callback or cancel/complete race — idempotent no-op.
+		return false, nil
+	}
+
+	existing.Status = phase
+	existing.Message = msg
+	existing.Outputs = outputs
+	existing.Metrics = metrics
+	existing.Version++
+	existing.UpdatedAt = time.Now()
+
+	for _, tr := range m.taskIndex[existing.WorkflowRunID] {
+		if tr.RunID == taskRunID {
+			tr.Status = existing.Status
+			tr.Message = existing.Message
+			tr.Outputs = existing.Outputs
+			tr.Metrics = existing.Metrics
+			tr.Version = existing.Version
+			tr.UpdatedAt = existing.UpdatedAt
+			break
+		}
+	}
+	pk := parentKey(existing.WorkflowRunID, existing.ParentRunID)
+	for _, tr := range m.parentIndex[pk] {
+		if tr.RunID == taskRunID {
+			tr.Status = existing.Status
+			tr.Message = existing.Message
+			tr.Outputs = existing.Outputs
+			tr.Metrics = existing.Metrics
+			tr.Version = existing.Version
+			tr.UpdatedAt = existing.UpdatedAt
+			break
+		}
+	}
+	return true, nil
+}
+
 func (m *Store) UpdateTaskRun(_ context.Context, run *store.TaskRun) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

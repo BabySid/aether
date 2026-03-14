@@ -313,16 +313,32 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID uint64) {
 // entrypoint DAG, so hooks on tasks inside nested DAGs are silently missed.
 // This will be fixed once scope-aware task resolution is implemented.
 func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult) {
-	// 1. Persist result: update Status, Message, and Outputs in Store.
+	// 1. Atomically persist result: Running → terminal phase + outputs in one write.
+	//
+	// CompleteTaskRun (CAS Running → phase + outputs) guards against:
+	//   a) Duplicate completion callbacks (network retries in distributed mode): only the
+	//      first call transitions Running→terminal; subsequent ones find status != Running and stop.
+	//   b) Cancel vs. Complete races: if Cancel already moved the task to Error, a late
+	//      completion callback cannot overwrite that terminal state.
+	//
+	// If CompleteTaskRun returns ok=false, skip all further processing — another writer
+	// has already handled the terminal transition.
+	var taskOutputs *model.Outputs
+	var taskMetrics *model.Metrics
+	if result.Outputs != nil {
+		taskOutputs = result.Outputs
+		taskMetrics = result.Outputs.Metrics
+	}
+	ok, err := e.store.CompleteTaskRun(ctx, result.TaskRunID, result.Phase, result.Message, taskOutputs, taskMetrics)
+	if err != nil || !ok {
+		// Either a store error or the task was already in a terminal/non-Running state.
+		return
+	}
+
 	tr, err := e.store.GetTaskRun(ctx, result.TaskRunID)
 	if err != nil {
 		return
 	}
-
-	tr.Status = result.Phase
-	tr.Message = result.Message
-	tr.Outputs = result.Outputs
-	_ = e.store.UpdateTaskRun(ctx, tr)
 
 	// 2. Fire task-level hooks (e.g., onSuccess, onFailure).
 	//

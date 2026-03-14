@@ -74,6 +74,16 @@ type TaskRunStore interface {
 	// Running→Succeeded to prevent duplicate processing under concurrent advanceScope calls.
 	UpdateTaskRunCAS(ctx context.Context, taskRunID uint64, expected, target model.Phase, msg string) (bool, error)
 
+	// CompleteTaskRun atomically transitions a task from Running to a terminal phase
+	// and persists the execution result (outputs, metrics) in a single write.
+	//
+	// This is semantically equivalent to:
+	//   UpdateTaskRunCAS(Running → phase) + UpdateTaskRun(outputs)
+	// but avoids the window where status is terminal yet outputs are nil.
+	//
+	// Returns (true, nil) on success, (false, nil) if status != Running (duplicate/cancel race).
+	CompleteTaskRun(ctx context.Context, taskRunID uint64, phase model.Phase, msg string, outputs *model.Outputs, metrics *model.Metrics) (bool, error)
+
 	// ListTaskRuns returns all task runs for a given workflow run.
 	ListTaskRuns(ctx context.Context, workflowRunID uint64) ([]*TaskRun, error)
 
