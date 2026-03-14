@@ -31,3 +31,5 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+specs/todo.md
+specs/design-spec.md
