@@ -302,99 +302,13 @@ func TestAggregateAll_NoOutputs(t *testing.T) {
 	}
 }
 
-// ---- aggregateFirstSuccess ----
-
-func TestAggregateFirstSuccess_FirstSucceedWins(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseFailed},
-		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "url", Value: rawJSON("https://example.com")}},
-		}},
-		{Index: 2, Phase: model.PhaseSucceeded},
-	}
-	phase, _, outputs := aggregateFirstSuccess(results)
-	if phase != model.PhaseSucceeded {
-		t.Errorf("expected Succeeded, got %v", phase)
-	}
-	if outputs == nil || len(outputs.Parameters) != 1 {
-		t.Errorf("expected outputs from index 1, got %v", outputs)
-	}
-}
-
-func TestAggregateFirstSuccess_NoSuccessReturnsFailed(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseFailed},
-		{Index: 1, Phase: model.PhaseFailed},
-	}
-	phase, msg, _ := aggregateFirstSuccess(results)
-	if phase != model.PhaseFailed {
-		t.Errorf("expected Failed, got %v", phase)
-	}
-	if msg == "" {
-		t.Error("expected non-empty failure message")
-	}
-}
-
-func TestAggregateResults_FirstSuccess_Strategy(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "x", Value: rawJSON(1)}},
-		}},
-	}
-	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: "first_success"})
-	if phase != model.PhaseSucceeded {
-		t.Errorf("expected Succeeded, got %v", phase)
-	}
-	if outputs == nil {
-		t.Error("expected outputs forwarded from first success")
-	}
-}
-
-// ---- aggregateQuorum ----
-
-func TestAggregateQuorum_Passes(t *testing.T) {
-	// 3 out of 5 → 3 > 5/2=2 → Succeeded
+func TestAggregateResults_AllStrategy_Constant(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded},
-		{Index: 1, Phase: model.PhaseFailed},
-		{Index: 2, Phase: model.PhaseSucceeded},
-		{Index: 3, Phase: model.PhaseFailed},
-		{Index: 4, Phase: model.PhaseSucceeded},
 	}
-	phase, _, _ := aggregateQuorum(results)
+	phase, _, _ := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyAll})
 	if phase != model.PhaseSucceeded {
-		t.Errorf("expected Succeeded (quorum met), got %v", phase)
-	}
-}
-
-func TestAggregateQuorum_Fails(t *testing.T) {
-	// 2 out of 5 → 2 > 5/2=2 is false → Failed
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseSucceeded},
-		{Index: 1, Phase: model.PhaseFailed},
-		{Index: 2, Phase: model.PhaseFailed},
-		{Index: 3, Phase: model.PhaseFailed},
-		{Index: 4, Phase: model.PhaseSucceeded},
-	}
-	phase, msg, _ := aggregateQuorum(results)
-	if phase != model.PhaseFailed {
-		t.Errorf("expected Failed (quorum not met), got %v", phase)
-	}
-	if msg == "" {
-		t.Error("expected non-empty failure message")
-	}
-}
-
-func TestAggregateResults_Quorum_Strategy(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseSucceeded},
-		{Index: 1, Phase: model.PhaseSucceeded},
-		{Index: 2, Phase: model.PhaseFailed},
-	}
-	// 2 out of 3 → 2 > 3/2=1 → Succeeded
-	phase, _, _ := AggregateResults(results, &model.Aggregate{Strategy: "quorum"})
-	if phase != model.PhaseSucceeded {
-		t.Errorf("expected Succeeded (quorum via AggregateResults), got %v", phase)
+		t.Errorf("expected Succeeded with AggregateStrategyAll constant, got %v", phase)
 	}
 }
 

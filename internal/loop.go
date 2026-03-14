@@ -167,17 +167,13 @@ type LoopIterationResult struct {
 }
 
 // AggregateResults aggregates the terminal results of all loop iterations into a
-// single (phase, message, outputs) triple, according to the loop's aggregate strategy.
+// single (phase, message, outputs) triple.
 //
-// Strategies:
+// Currently only AggregateStrategyAll ("all") is supported (default when strategy is empty):
+// all iterations must succeed; outputs are merged with a "_<index>" suffix on each parameter
+// name to avoid name collisions.
 //
-//	"all"           (default) — all iterations must succeed; outputs are merged with
-//	                             suffix "_<index>" to avoid name collisions.
-//	"first_success"           — succeed as soon as any one iteration succeeds; returns
-//	                             that iteration's outputs directly.
-//	"quorum"                  — succeed if strictly more than half of iterations succeed.
-//
-// Example (3-item loop, strategy "all"):
+// Example (3-item loop, one failed):
 //
 //	results = [{Index:0, Phase:Succeeded, Outputs:{status_0:"ok"}},
 //	           {Index:1, Phase:Succeeded, Outputs:{status_1:"ok"}},
@@ -185,7 +181,7 @@ type LoopIterationResult struct {
 //
 //	→ (Failed, "iteration 2: timeout", nil)
 //
-// Example (3-item loop, all succeeded, strategy "all"):
+// Example (all succeeded):
 //
 //	results = [{Index:0, Phase:Succeeded, Outputs:{Parameters:[{status,"ok"}]}}, ...]
 //
@@ -193,24 +189,11 @@ type LoopIterationResult struct {
 //
 // Called by advanceScope after allTerminal=true and tryAdvanceRepeatLoop returns false,
 // to compute the final phase/outputs of the Loop container TaskRun.
-func AggregateResults(results []LoopIterationResult, aggregate *model.Aggregate) (model.Phase, string, *model.Outputs) {
+func AggregateResults(results []LoopIterationResult, _ *model.Aggregate) (model.Phase, string, *model.Outputs) {
 	if len(results) == 0 {
 		return model.PhaseSucceeded, "", nil
 	}
-
-	strategy := "all"
-	if aggregate != nil && aggregate.Strategy != "" {
-		strategy = aggregate.Strategy
-	}
-
-	switch strategy {
-	case "first_success":
-		return aggregateFirstSuccess(results)
-	case "quorum":
-		return aggregateQuorum(results)
-	default: // "all"
-		return aggregateAll(results)
-	}
+	return aggregateAll(results)
 }
 
 // aggregateAll requires every iteration to be in a terminal-success state (Succeeded
@@ -246,52 +229,6 @@ func aggregateAll(results []LoopIterationResult) (model.Phase, string, *model.Ou
 		}
 	}
 	return model.PhaseSucceeded, "", outputs
-}
-
-// aggregateFirstSuccess returns success the moment it finds the first iteration with
-// phase=Succeeded, forwarding that iteration's Outputs directly.
-// If no iteration succeeded the loop itself fails.
-//
-// Typical use case: fan-out search — spawn N workers in parallel, accept the first
-// winner, ignore the rest.
-//
-// Example:
-//
-//	results = [{Index:0, Phase:Failed},
-//	           {Index:1, Phase:Succeeded, Outputs:{Parameters:[{Name:"url", Value:"https://..."}]}},
-//	           {Index:2, Phase:Succeeded, ...}]
-//
-//	→ (Succeeded, "", &Outputs{Parameters:[{url,"https://..."}]})  ← first success wins
-func aggregateFirstSuccess(results []LoopIterationResult) (model.Phase, string, *model.Outputs) {
-	for _, r := range results {
-		if r.Phase == model.PhaseSucceeded {
-			return model.PhaseSucceeded, "", r.Outputs
-		}
-	}
-	return model.PhaseFailed, "no iteration succeeded", nil
-}
-
-// aggregateQuorum succeeds if strictly more than half of the iterations succeeded.
-// No outputs are merged; only the phase/message are determined.
-//
-// Example (5 iterations, 3 succeed):
-//
-//	succeeded=3, total=5 → 3 > 5/2=2 → (Succeeded, "", nil)
-//
-// Example (5 iterations, 2 succeed):
-//
-//	succeeded=2, total=5 → 2 > 5/2=2 is false → (Failed, "quorum not met: 2/5 succeeded", nil)
-func aggregateQuorum(results []LoopIterationResult) (model.Phase, string, *model.Outputs) {
-	succeeded := 0
-	for _, r := range results {
-		if r.Phase == model.PhaseSucceeded {
-			succeeded++
-		}
-	}
-	if succeeded > len(results)/2 {
-		return model.PhaseSucceeded, "", nil
-	}
-	return model.PhaseFailed, fmt.Sprintf("quorum not met: %d/%d succeeded", succeeded, len(results)), nil
 }
 
 // BuildRepeatEnv constructs the expression evaluation environment used by

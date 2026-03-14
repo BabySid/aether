@@ -52,8 +52,17 @@ type Loop struct {
 	Timeout         string           `json:"timeout,omitempty"`
 }
 
+// AggregateStrategy defines how loop iteration results are combined.
+type AggregateStrategy string
+
+const (
+	// AggregateStrategyAll requires every iteration to succeed (default).
+	// Outputs are merged with an "_<index>" suffix on each parameter name.
+	AggregateStrategyAll AggregateStrategy = "all"
+)
+
 // Aggregate defines how loop iteration results are combined.
 type Aggregate struct {
-	Strategy   string   `json:"strategy,omitempty"` // last, first, list, merge
-	Parameters []string `json:"parameters,omitempty"`
+	Strategy   AggregateStrategy `json:"strategy,omitempty"`
+	Parameters []string          `json:"parameters,omitempty"`
 }

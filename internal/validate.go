@@ -219,6 +219,17 @@ func validateLoop(wf *model.Workflow, loop *model.Loop) error {
 		return fmt.Errorf("loop.concurrency is not allowed with repeatCondition (serial only)")
 	}
 
+	// validate aggregate strategy if specified
+	if loop.Aggregate != nil && loop.Aggregate.Strategy != "" {
+		switch loop.Aggregate.Strategy {
+		case model.AggregateStrategyAll:
+			// valid
+		default:
+			return fmt.Errorf("loop.aggregate.strategy %q is not supported; valid values: %q",
+				loop.Aggregate.Strategy, model.AggregateStrategyAll)
+		}
+	}
+
 	return nil
 }
 
