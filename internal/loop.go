@@ -10,15 +10,6 @@ import (
 	"github.com/BabySid/aether/store"
 )
 
-// LoopContext holds the state for a loop template execution.
-type LoopContext struct {
-	WorkflowRunID uint64
-	LoopTaskName  string // parent task name
-	Loop          *model.Loop
-	BodyTemplate  *model.Template
-	Workflow      *model.Workflow
-}
-
 // ExpandLoopIterations expands a loop definition into a list of iteration items.
 // Each item is a map[string]any representing one iteration's parameters.
 //
