@@ -146,37 +146,6 @@ func (m *Store) CreateTaskRun(_ context.Context, run *store.TaskRun) error {
 	return nil
 }
 
-func (m *Store) BatchCreateTaskRuns(_ context.Context, runs []*store.TaskRun) ([]*store.TaskRun, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	now := time.Now()
-	created := make([]*store.TaskRun, 0, len(runs))
-
-	for _, run := range runs {
-		// Dedup by (workflowRunID, parentRunID, taskName) — the natural unique key for a task
-		// within its scope. Using workflowRunID+taskName alone is insufficient: the same
-		// template name (e.g., loop body) can appear as sibling TaskRuns in different scopes.
-		if m.taskExistsLocked(run.WorkflowRunID, run.ParentRunID, run.TaskName) {
-			continue
-		}
-
-		cp := *run
-		cp.CreatedAt = now
-		cp.UpdatedAt = now
-		m.taskRuns[run.RunID] = &cp
-		m.taskIndex[run.WorkflowRunID] = append(m.taskIndex[run.WorkflowRunID], &cp)
-
-		pk := parentKey(run.WorkflowRunID, run.ParentRunID)
-		m.parentIndex[pk] = append(m.parentIndex[pk], &cp)
-
-		retCp := cp
-		created = append(created, &retCp)
-	}
-
-	return created, nil
-}
-
 func (m *Store) GetTaskRun(_ context.Context, taskRunID uint64) (*store.TaskRun, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

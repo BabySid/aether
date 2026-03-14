@@ -58,9 +58,6 @@ type TaskRunStore interface {
 	// rather than creating a duplicate. Callers treat ErrAlreadyExists as a no-op.
 	CreateTaskRun(ctx context.Context, run *TaskRun) error
 
-	// BatchCreateTaskRuns creates multiple task runs. Deduplicates by (workflowRunID, parentRunID, taskName).
-	BatchCreateTaskRuns(ctx context.Context, runs []*TaskRun) ([]*TaskRun, error)
-
 	// GetTaskRun retrieves a task run by ID.
 	GetTaskRun(ctx context.Context, taskRunID uint64) (*TaskRun, error)
 
