@@ -56,12 +56,21 @@ type Loop struct {
 type AggregateStrategy string
 
 const (
-	// AggregateStrategyAll requires every iteration to succeed (default).
-	// Outputs are merged with an "_<index>" suffix on each parameter name.
-	AggregateStrategyAll AggregateStrategy = "all"
+	// AggregateStrategyLast uses the last iteration's outputs (default).
+	AggregateStrategyLast AggregateStrategy = "last"
+
+	// AggregateStrategyFirst uses the first iteration's outputs.
+	AggregateStrategyFirst AggregateStrategy = "first"
+
+	// AggregateStrategyList collects each declared parameter from all iterations
+	// into an ordered JSON array (sorted by iteration index).
+	AggregateStrategyList AggregateStrategy = "list"
 )
 
 // Aggregate defines how loop iteration results are combined.
+//
+// Strategy selects the aggregation mode (default: "last").
+// Parameters lists the output parameter names to include; omit to include all.
 type Aggregate struct {
 	Strategy   AggregateStrategy `json:"strategy,omitempty"`
 	Parameters []string          `json:"parameters,omitempty"`

@@ -167,68 +167,137 @@ type LoopIterationResult struct {
 }
 
 // AggregateResults aggregates the terminal results of all loop iterations into a
-// single (phase, message, outputs) triple.
+// single (phase, message, outputs) triple according to the aggregate strategy.
 //
-// Currently only AggregateStrategyAll ("all") is supported (default when strategy is empty):
-// all iterations must succeed; outputs are merged with a "_<index>" suffix on each parameter
-// name to avoid name collisions.
+// All strategies first verify that every iteration succeeded (or was skipped);
+// the first non-success iteration short-circuits with its phase/message.
 //
-// Example (3-item loop, one failed):
+// Strategies (default: "last"):
 //
-//	results = [{Index:0, Phase:Succeeded, Outputs:{status_0:"ok"}},
-//	           {Index:1, Phase:Succeeded, Outputs:{status_1:"ok"}},
-//	           {Index:2, Phase:Failed,    Message:"timeout"}]
+//	"last"  — use the last iteration's outputs as-is.
+//	"first" — use the first iteration's outputs as-is.
+//	"list"  — collect each declared parameter across all iterations into a JSON array.
 //
-//	→ (Failed, "iteration 2: timeout", nil)
+// The Aggregate.Parameters field lists which output parameter names to include.
+// If Parameters is empty, all output parameters are included.
 //
-// Example (all succeeded):
+// Example loop: 3 iterations, body outputs {status, code}.
 //
-//	results = [{Index:0, Phase:Succeeded, Outputs:{Parameters:[{status,"ok"}]}}, ...]
+//	strategy:"last",  parameters:[]         → {status:"ok",  code:0}     (iter[2] output)
+//	strategy:"first", parameters:["status"] → {status:"ok"}              (iter[0].status only)
+//	strategy:"list",  parameters:["status"] → {status:["ok","fail","ok"]} (all iters, index-ordered)
+//	strategy:"list",  parameters:[]         → {status:["ok","fail","ok"], code:[0,1,0]}
 //
-//	→ (Succeeded, "", &Outputs{Parameters:[{status_0,"ok"},{status_1,"ok"},{status_2,"ok"}]})
-//
-// Called by advanceScope after allTerminal=true and tryAdvanceRepeatLoop returns false,
-// to compute the final phase/outputs of the Loop container TaskRun.
-func AggregateResults(results []LoopIterationResult, _ *model.Aggregate) (model.Phase, string, *model.Outputs) {
+// Called by advanceScope after allTerminal=true and tryAdvanceRepeatLoop returns false.
+func AggregateResults(results []LoopIterationResult, aggregate *model.Aggregate) (model.Phase, string, *model.Outputs) {
 	if len(results) == 0 {
 		return model.PhaseSucceeded, "", nil
 	}
-	return aggregateAll(results)
-}
 
-// aggregateAll requires every iteration to be in a terminal-success state (Succeeded
-// or Skipped). The first non-success iteration short-circuits with its phase/message.
-// Successful iteration outputs are merged with a "_<index>" suffix on each parameter name.
-//
-// Example:
-//
-//	results = [{Index:0, Phase:Succeeded, Outputs:{Parameters:[{Name:"result", Value:"A"}]}},
-//	           {Index:1, Phase:Succeeded, Outputs:{Parameters:[{Name:"result", Value:"B"}]}}]
-//
-//	→ (Succeeded, "", &Outputs{Parameters:[{result_0,"A"}, {result_1,"B"}]})
-func aggregateAll(results []LoopIterationResult) (model.Phase, string, *model.Outputs) {
-	var allParams []model.Parameter
+	// All strategies require every iteration to succeed first.
 	for _, r := range results {
 		if r.Phase != model.PhaseSucceeded && r.Phase != model.PhaseSkipped {
 			return r.Phase, fmt.Sprintf("iteration %d: %s", r.Index, r.Message), nil
 		}
-		if r.Outputs != nil {
-			for _, p := range r.Outputs.Parameters {
-				allParams = append(allParams, model.Parameter{
-					Name:  fmt.Sprintf("%s_%d", p.Name, r.Index),
-					Value: p.Value,
-				})
+	}
+
+	strategy := model.AggregateStrategyLast
+	if aggregate != nil && aggregate.Strategy != "" {
+		strategy = aggregate.Strategy
+	}
+	var paramFilter map[string]bool
+	if aggregate != nil && len(aggregate.Parameters) > 0 {
+		paramFilter = make(map[string]bool, len(aggregate.Parameters))
+		for _, p := range aggregate.Parameters {
+			paramFilter[p] = true
+		}
+	}
+
+	switch strategy {
+	case model.AggregateStrategyFirst:
+		return aggregatePickOne(results, 0, paramFilter)
+	case model.AggregateStrategyList:
+		return aggregateList(results, paramFilter)
+	default: // AggregateStrategyLast
+		return aggregatePickOne(results, len(results)-1, paramFilter)
+	}
+}
+
+// aggregatePickOne returns the outputs of the iteration at position idx (0=first, N-1=last),
+// filtered by paramFilter (nil means include all parameters).
+func aggregatePickOne(results []LoopIterationResult, idx int, paramFilter map[string]bool) (model.Phase, string, *model.Outputs) {
+	r := results[idx]
+	if r.Outputs == nil || len(r.Outputs.Parameters) == 0 {
+		return model.PhaseSucceeded, "", nil
+	}
+	params := filterParams(r.Outputs.Parameters, paramFilter)
+	if len(params) == 0 {
+		return model.PhaseSucceeded, "", nil
+	}
+	return model.PhaseSucceeded, "", &model.Outputs{Phase: model.PhaseSucceeded, Parameters: params}
+}
+
+// aggregateList collects the values of each parameter across all iterations into
+// an ordered JSON array (by iteration index). Only parameters present in paramFilter
+// are included; if paramFilter is nil, all parameters found in any iteration are collected.
+//
+// Example (3 iterations, paramFilter=nil):
+//
+//	iter[0]: {status:"ok",   code:0}
+//	iter[1]: {status:"fail", code:1}
+//	iter[2]: {status:"ok",   code:0}
+//
+//	→ {status:["ok","fail","ok"], code:[0,1,0]}
+func aggregateList(results []LoopIterationResult, paramFilter map[string]bool) (model.Phase, string, *model.Outputs) {
+	// Preserve insertion-order of parameter names across all iterations.
+	order := make([]string, 0)
+	seen := make(map[string]bool)
+	collected := make(map[string][]json.RawMessage) // name → per-iteration values
+
+	for _, r := range results {
+		if r.Outputs == nil {
+			continue
+		}
+		for _, p := range r.Outputs.Parameters {
+			if paramFilter != nil && !paramFilter[p.Name] {
+				continue
 			}
+			if !seen[p.Name] {
+				seen[p.Name] = true
+				order = append(order, p.Name)
+			}
+			collected[p.Name] = append(collected[p.Name], p.Value)
 		}
 	}
-	var outputs *model.Outputs
-	if len(allParams) > 0 {
-		outputs = &model.Outputs{
-			Phase:      model.PhaseSucceeded,
-			Parameters: allParams,
+
+	if len(order) == 0 {
+		return model.PhaseSucceeded, "", nil
+	}
+
+	params := make([]model.Parameter, 0, len(order))
+	for _, name := range order {
+		arrJSON, err := json.Marshal(collected[name])
+		if err != nil {
+			return model.PhaseFailed, fmt.Sprintf("aggregate list: marshal %q: %v", name, err), nil
+		}
+		params = append(params, model.Parameter{Name: name, Value: arrJSON})
+	}
+	return model.PhaseSucceeded, "", &model.Outputs{Phase: model.PhaseSucceeded, Parameters: params}
+}
+
+// filterParams returns only the parameters whose names are in paramFilter.
+// If paramFilter is nil, all parameters are returned unchanged.
+func filterParams(params []model.Parameter, paramFilter map[string]bool) []model.Parameter {
+	if paramFilter == nil {
+		return params
+	}
+	out := make([]model.Parameter, 0, len(params))
+	for _, p := range params {
+		if paramFilter[p.Name] {
+			out = append(out, p)
 		}
 	}
-	return model.PhaseSucceeded, "", outputs
+	return out
 }
 
 // BuildRepeatEnv constructs the expression evaluation environment used by

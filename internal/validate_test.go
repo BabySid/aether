@@ -602,23 +602,53 @@ func TestValidate_LoopRepeatConditionNoConcurrency(t *testing.T) {
 	assertContains(t, err.Error(), "loop.concurrency is not allowed with repeatCondition")
 }
 
-func TestValidate_LoopAggregateStrategy_Valid(t *testing.T) {
+func TestValidate_LoopAggregateStrategy_Last(t *testing.T) {
 	wf := validWorkflow()
 	wf.Spec.Templates = append(wf.Spec.Templates,
 		model.Template{Loop: &model.Loop{
 			Name:      "my-loop",
 			Items:     []any{"a"},
 			Body:      "exec-a",
-			Aggregate: &model.Aggregate{Strategy: model.AggregateStrategyAll},
+			Aggregate: &model.Aggregate{Strategy: model.AggregateStrategyLast},
 		}},
 	)
 	if err := Validate(wf); err != nil {
-		t.Fatalf("expected valid strategy to pass, got: %v", err)
+		t.Fatalf("expected strategy 'last' to pass, got: %v", err)
+	}
+}
+
+func TestValidate_LoopAggregateStrategy_First(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates = append(wf.Spec.Templates,
+		model.Template{Loop: &model.Loop{
+			Name:      "my-loop",
+			Items:     []any{"a"},
+			Body:      "exec-a",
+			Aggregate: &model.Aggregate{Strategy: model.AggregateStrategyFirst},
+		}},
+	)
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected strategy 'first' to pass, got: %v", err)
+	}
+}
+
+func TestValidate_LoopAggregateStrategy_List(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates = append(wf.Spec.Templates,
+		model.Template{Loop: &model.Loop{
+			Name:      "my-loop",
+			Items:     []any{"a"},
+			Body:      "exec-a",
+			Aggregate: &model.Aggregate{Strategy: model.AggregateStrategyList},
+		}},
+	)
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected strategy 'list' to pass, got: %v", err)
 	}
 }
 
 func TestValidate_LoopAggregateStrategy_Empty_Valid(t *testing.T) {
-	// empty strategy means "all" (default); should pass
+	// empty strategy defaults to "last"; should pass
 	wf := validWorkflow()
 	wf.Spec.Templates = append(wf.Spec.Templates,
 		model.Template{Loop: &model.Loop{

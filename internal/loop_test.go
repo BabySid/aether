@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -222,93 +223,187 @@ func TestAggregateResults_EmptyReturnsSucceeded(t *testing.T) {
 	}
 }
 
-func TestAggregateResults_DefaultStrategyIsAll(t *testing.T) {
+func TestAggregateResults_FailedIterationShortCircuits(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded},
 		{Index: 1, Phase: model.PhaseFailed, Message: "oops"},
+		{Index: 2, Phase: model.PhaseSucceeded},
 	}
 	phase, msg, _ := AggregateResults(results, nil)
 	if phase != model.PhaseFailed {
-		t.Errorf("expected Failed (strategy all), got %v", phase)
+		t.Errorf("expected Failed, got %v", phase)
 	}
 	if msg == "" {
 		t.Error("expected non-empty message for failed iteration")
 	}
 }
 
-// ---- aggregateAll ----
-
-func TestAggregateAll_AllSucceeded_MergesOutputs(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "result", Value: rawJSON("A")}},
-		}},
-		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "result", Value: rawJSON("B")}},
-		}},
-	}
-	phase, msg, outputs := aggregateAll(results)
-	if phase != model.PhaseSucceeded {
-		t.Errorf("expected Succeeded, got %v", phase)
-	}
-	if msg != "" {
-		t.Errorf("expected empty msg, got %q", msg)
-	}
-	if outputs == nil || len(outputs.Parameters) != 2 {
-		t.Fatalf("expected 2 merged parameters, got %v", outputs)
-	}
-	names := map[string]bool{}
-	for _, p := range outputs.Parameters {
-		names[p.Name] = true
-	}
-	if !names["result_0"] || !names["result_1"] {
-		t.Errorf("expected result_0 and result_1 keys, got %v", names)
-	}
-}
-
-func TestAggregateAll_OneFailedShortCircuits(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseSucceeded},
-		{Index: 1, Phase: model.PhaseFailed, Message: "disk full"},
-		{Index: 2, Phase: model.PhaseSucceeded},
-	}
-	phase, msg, _ := aggregateAll(results)
-	if phase != model.PhaseFailed {
-		t.Errorf("expected Failed, got %v", phase)
-	}
-	if msg == "" {
-		t.Error("expected non-empty message")
-	}
-}
-
-func TestAggregateAll_SkippedCountsAsSuccess(t *testing.T) {
+func TestAggregateResults_SkippedCountsAsSuccess(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded},
 		{Index: 1, Phase: model.PhaseSkipped},
 	}
-	phase, _, _ := aggregateAll(results)
+	phase, _, _ := AggregateResults(results, nil)
 	if phase != model.PhaseSucceeded {
-		t.Errorf("Skipped should be treated as success in aggregateAll, got %v", phase)
+		t.Errorf("Skipped should be treated as success, got %v", phase)
 	}
 }
 
-func TestAggregateAll_NoOutputs(t *testing.T) {
+// ---- strategy: last (default) ----
+
+func TestAggregateResults_Last_Default(t *testing.T) {
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("first")}},
+		}},
+		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("last")}},
+		}},
+	}
+	phase, _, outputs := AggregateResults(results, nil) // nil → default "last"
+	if phase != model.PhaseSucceeded {
+		t.Errorf("expected Succeeded, got %v", phase)
+	}
+	if outputs == nil || len(outputs.Parameters) != 1 {
+		t.Fatalf("expected 1 parameter, got %v", outputs)
+	}
+	var v string
+	_ = json.Unmarshal(outputs.Parameters[0].Value, &v)
+	if v != "last" {
+		t.Errorf("expected last iteration value 'last', got %q", v)
+	}
+}
+
+func TestAggregateResults_Last_WithFilter(t *testing.T) {
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded},
+		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("ok")},
+				{Name: "code", Value: rawJSON(0)},
+			},
+		}},
+	}
+	phase, _, outputs := AggregateResults(results, &model.Aggregate{
+		Strategy:   model.AggregateStrategyLast,
+		Parameters: []string{"status"},
+	})
+	if phase != model.PhaseSucceeded {
+		t.Errorf("expected Succeeded, got %v", phase)
+	}
+	if outputs == nil || len(outputs.Parameters) != 1 || outputs.Parameters[0].Name != "status" {
+		t.Errorf("expected only 'status' parameter, got %v", outputs)
+	}
+}
+
+func TestAggregateResults_Last_NoOutputs(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded},
 	}
-	_, _, outputs := aggregateAll(results)
+	_, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyLast})
+	if outputs != nil {
+		t.Errorf("expected nil outputs when last iteration has no outputs, got %v", outputs)
+	}
+}
+
+// ---- strategy: first ----
+
+func TestAggregateResults_First(t *testing.T) {
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("first")}},
+		}},
+		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("last")}},
+		}},
+	}
+	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyFirst})
+	if phase != model.PhaseSucceeded {
+		t.Errorf("expected Succeeded, got %v", phase)
+	}
+	var v string
+	_ = json.Unmarshal(outputs.Parameters[0].Value, &v)
+	if v != "first" {
+		t.Errorf("expected first iteration value 'first', got %q", v)
+	}
+}
+
+// ---- strategy: list ----
+
+func TestAggregateResults_List_AllParams(t *testing.T) {
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("ok")},
+				{Name: "code", Value: rawJSON(0)},
+			},
+		}},
+		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("fail")},
+				{Name: "code", Value: rawJSON(1)},
+			},
+		}},
+		{Index: 2, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("ok")},
+				{Name: "code", Value: rawJSON(0)},
+			},
+		}},
+	}
+	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyList})
+	if phase != model.PhaseSucceeded {
+		t.Fatalf("expected Succeeded, got %v", phase)
+	}
+	if outputs == nil || len(outputs.Parameters) != 2 {
+		t.Fatalf("expected 2 parameters (status, code), got %v", outputs)
+	}
+	paramMap := map[string]json.RawMessage{}
+	for _, p := range outputs.Parameters {
+		paramMap[p.Name] = p.Value
+	}
+	var statuses []string
+	_ = json.Unmarshal(paramMap["status"], &statuses)
+	if len(statuses) != 3 || statuses[0] != "ok" || statuses[1] != "fail" || statuses[2] != "ok" {
+		t.Errorf("expected status=[ok,fail,ok], got %v", statuses)
+	}
+}
+
+func TestAggregateResults_List_WithFilter(t *testing.T) {
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("ok")},
+				{Name: "code", Value: rawJSON(0)},
+			},
+		}},
+		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
+			Parameters: []model.Parameter{
+				{Name: "status", Value: rawJSON("fail")},
+				{Name: "code", Value: rawJSON(1)},
+			},
+		}},
+	}
+	phase, _, outputs := AggregateResults(results, &model.Aggregate{
+		Strategy:   model.AggregateStrategyList,
+		Parameters: []string{"status"}, // only collect "status"
+	})
+	if phase != model.PhaseSucceeded {
+		t.Fatalf("expected Succeeded, got %v", phase)
+	}
+	if outputs == nil || len(outputs.Parameters) != 1 || outputs.Parameters[0].Name != "status" {
+		t.Errorf("expected only 'status' parameter, got %v", outputs)
+	}
+}
+
+func TestAggregateResults_List_NoOutputs(t *testing.T) {
+	results := []LoopIterationResult{
+		{Index: 0, Phase: model.PhaseSucceeded},
+		{Index: 1, Phase: model.PhaseSucceeded},
+	}
+	_, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyList})
 	if outputs != nil {
 		t.Errorf("expected nil outputs when no iteration has outputs, got %v", outputs)
-	}
-}
-
-func TestAggregateResults_AllStrategy_Constant(t *testing.T) {
-	results := []LoopIterationResult{
-		{Index: 0, Phase: model.PhaseSucceeded},
-	}
-	phase, _, _ := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyAll})
-	if phase != model.PhaseSucceeded {
-		t.Errorf("expected Succeeded with AggregateStrategyAll constant, got %v", phase)
 	}
 }
 

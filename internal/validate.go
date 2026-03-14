@@ -222,11 +222,11 @@ func validateLoop(wf *model.Workflow, loop *model.Loop) error {
 	// validate aggregate strategy if specified
 	if loop.Aggregate != nil && loop.Aggregate.Strategy != "" {
 		switch loop.Aggregate.Strategy {
-		case model.AggregateStrategyAll:
+		case model.AggregateStrategyLast, model.AggregateStrategyFirst, model.AggregateStrategyList:
 			// valid
 		default:
-			return fmt.Errorf("loop.aggregate.strategy %q is not supported; valid values: %q",
-				loop.Aggregate.Strategy, model.AggregateStrategyAll)
+			return fmt.Errorf("loop.aggregate.strategy %q is not supported; valid values: last, first, list",
+				loop.Aggregate.Strategy)
 		}
 	}
 

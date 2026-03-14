@@ -941,11 +941,10 @@
                     "enum": [
                         "last",
                         "first",
-                        "list",
-                        "merge"
+                        "list"
                     ],
                     "default": "last",
-                    "description": "Aggregation strategy: last=use last iteration output, first=use first iteration output, list=collect all iteration outputs into an ordered array (by iterator.index), merge=deep merge all iteration object outputs"
+                    "description": "Aggregation strategy: last=use last iteration output (default), first=use first iteration output, list=collect each declared parameter across all iterations into an ordered JSON array (by iteration index)"
                 },
                 "parameters": {
                     "type": "array",
