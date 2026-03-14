@@ -149,11 +149,16 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 
 		// 7. All children are terminal and no further iterations will be spawned.
 		// Aggregate children's results into the parent container's phase and walk up.
+		// Use CAS (Running → terminal) to guard against concurrent advanceScope calls
+		// that may both reach this point. Only the first one succeeds; others are no-ops.
 		phase, msg := aggregatePhase(siblings)
-		parentTR.Status = phase
-		parentTR.Message = msg
-		if err := e.store.UpdateTaskRun(ctx, parentTR); err != nil {
+		ok, err := e.store.UpdateTaskRunCAS(ctx, parentTR.RunID, model.PhaseRunning, phase, msg)
+		if err != nil {
 			return err
+		}
+		if !ok {
+			// Another advanceScope already finalized this container — stop here.
+			return nil
 		}
 
 		// Move up to the parent's parent scope and re-evaluate in the next iteration.
@@ -220,13 +225,15 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID uint64,
 		if err != nil {
 			return err
 		}
-		if ancestor.Status != model.PhasePending {
-			// Already Running (or terminal) — no need to update further up the chain.
-			break
-		}
-		ancestor.Status = model.PhaseRunning
-		if err := e.store.UpdateTaskRun(ctx, ancestor); err != nil {
+		// CAS: Pending → Running. If another goroutine already transitioned this
+		// ancestor, ok=false and we stop walking — all further ancestors are also
+		// already Running or terminal.
+		ok, err := e.store.UpdateTaskRunCAS(ctx, ancestor.RunID, model.PhasePending, model.PhaseRunning, "")
+		if err != nil {
 			return err
+		}
+		if !ok {
+			break
 		}
 		parentRunID = ancestor.ParentRunID
 	}

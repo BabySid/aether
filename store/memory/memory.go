@@ -126,8 +126,11 @@ func (m *Store) CreateTaskRun(_ context.Context, run *store.TaskRun) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.taskRuns[run.RunID]; exists {
-		return fmt.Errorf("task run %d already exists", run.RunID)
+	// Idempotency guard: (workflowRunID, parentRunID, taskName) must be unique within a scope.
+	// Concurrent advanceScope calls may both attempt to create the same task; the second
+	// call gets ErrAlreadyExists and treats it as a no-op.
+	if m.taskExistsLocked(run.WorkflowRunID, run.ParentRunID, run.TaskName) {
+		return store.ErrAlreadyExists
 	}
 
 	now := time.Now()
@@ -184,6 +187,47 @@ func (m *Store) GetTaskRun(_ context.Context, taskRunID uint64) (*store.TaskRun,
 	}
 	cp := *run
 	return &cp, nil
+}
+
+func (m *Store) UpdateTaskRunCAS(_ context.Context, taskRunID uint64, expected, target model.Phase, msg string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, ok := m.taskRuns[taskRunID]
+	if !ok {
+		return false, fmt.Errorf("task run %d: %w", taskRunID, store.ErrNotFound)
+	}
+	if existing.Status != expected {
+		// Another writer already transitioned this task — idempotent no-op.
+		return false, nil
+	}
+
+	existing.Status = target
+	existing.Message = msg
+	existing.Version++
+	existing.UpdatedAt = time.Now()
+
+	// Propagate to indexes.
+	for _, tr := range m.taskIndex[existing.WorkflowRunID] {
+		if tr.RunID == taskRunID {
+			tr.Status = existing.Status
+			tr.Message = existing.Message
+			tr.Version = existing.Version
+			tr.UpdatedAt = existing.UpdatedAt
+			break
+		}
+	}
+	pk := parentKey(existing.WorkflowRunID, existing.ParentRunID)
+	for _, tr := range m.parentIndex[pk] {
+		if tr.RunID == taskRunID {
+			tr.Status = existing.Status
+			tr.Message = existing.Message
+			tr.Version = existing.Version
+			tr.UpdatedAt = existing.UpdatedAt
+			break
+		}
+	}
+	return true, nil
 }
 
 func (m *Store) UpdateTaskRun(_ context.Context, run *store.TaskRun) error {

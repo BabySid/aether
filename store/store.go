@@ -16,6 +16,12 @@ var (
 
 	// ErrCASConflict indicates a compare-and-swap conflict.
 	ErrCASConflict = errors.New("cas conflict")
+
+	// ErrAlreadyExists indicates the resource already exists.
+	// Returned by CreateTaskRun when a task run with the same
+	// (workflowRunID, parentRunID, taskName) already exists.
+	// Callers should treat this as a no-op (idempotent create).
+	ErrAlreadyExists = errors.New("already exists")
 )
 
 // Store is the aggregated storage interface. It is the single source of truth for all state.
@@ -46,7 +52,10 @@ type WorkflowRunStore interface {
 
 // TaskRunStore manages task run persistence.
 type TaskRunStore interface {
-	// CreateTaskRun creates a single task run.
+	// CreateTaskRun creates a single task run, idempotent by
+	// (workflowRunID, parentRunID, taskName). If a task run with the same
+	// composite key already exists, implementations MUST return ErrAlreadyExists
+	// rather than creating a duplicate. Callers treat ErrAlreadyExists as a no-op.
 	CreateTaskRun(ctx context.Context, run *TaskRun) error
 
 	// BatchCreateTaskRuns creates multiple task runs. Deduplicates by (workflowRunID, parentRunID, taskName).
@@ -57,6 +66,13 @@ type TaskRunStore interface {
 
 	// UpdateTaskRun updates a task run's mutable fields (status, outputs, metrics).
 	UpdateTaskRun(ctx context.Context, run *TaskRun) error
+
+	// UpdateTaskRunCAS atomically updates a task run's status from expected to target.
+	// Returns (true, nil) if the update succeeded, (false, nil) if the current status
+	// did not match expected (i.e., another writer already transitioned it).
+	// Used to guard idempotent state transitions such as Pending→Running and
+	// Running→Succeeded to prevent duplicate processing under concurrent advanceScope calls.
+	UpdateTaskRunCAS(ctx context.Context, taskRunID uint64, expected, target model.Phase, msg string) (bool, error)
 
 	// ListTaskRuns returns all task runs for a given workflow run.
 	ListTaskRuns(ctx context.Context, workflowRunID uint64) ([]*TaskRun, error)

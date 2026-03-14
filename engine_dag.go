@@ -3,6 +3,7 @@ package aether
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/BabySid/aether/internal"
@@ -102,7 +103,7 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 				Status:        model.PhaseSkipped,
 				Message:       fmt.Sprintf("when condition %q evaluated to false", task.When),
 			}
-			if err := e.store.CreateTaskRun(ctx, skippedRun); err != nil {
+			if err := e.store.CreateTaskRun(ctx, skippedRun); err != nil && !errors.Is(err, store.ErrAlreadyExists) {
 				return err
 			}
 		}
@@ -126,6 +127,10 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 				Status:        model.PhasePending,
 			}
 			if err := e.store.CreateTaskRun(ctx, newRun); err != nil {
+				if errors.Is(err, store.ErrAlreadyExists) {
+					// Another concurrent advanceScope already created this task — skip activation.
+					continue
+				}
 				return err
 			}
 			// Activate synchronously: containers enter Running + recurse; leaf tasks dispatch.

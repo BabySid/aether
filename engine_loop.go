@@ -3,6 +3,7 @@ package aether
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/BabySid/aether/internal"
@@ -146,6 +147,10 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID uint64,
 		Status:        model.PhasePending,
 	}
 	if err := e.store.CreateTaskRun(ctx, iterRun); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			// Concurrent spawnRepeatIteration already created this iteration — no-op.
+			return nil
+		}
 		return fmt.Errorf("create repeat iteration %d: %w", iterIndex, err)
 	}
 	return e.advanceScope(ctx, workflowRunID, wf, loopTR.RunID)
@@ -254,6 +259,10 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID uint64, l
 		Inputs:        iterInputs,
 	}
 	if err := e.store.CreateTaskRun(ctx, iterRun); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			// Concurrent createIterationRun already created this slot — no-op.
+			return nil
+		}
 		return fmt.Errorf("create iteration %s: %w", iterScope+bodyName, err)
 	}
 	return nil
