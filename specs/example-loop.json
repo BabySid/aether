@@ -24,12 +24,8 @@
                     "inputs": {
                         "parameters": [
                             {
-                                "name": "item",
+                                "name": "filename",
                                 "type": "string"
-                            },
-                            {
-                                "name": "item_index",
-                                "type": "integer"
                             }
                         ]
                     },
@@ -37,7 +33,7 @@
                         "type": "script",
                         "config": {
                             "runtime": "python3",
-                            "source": "print(f'Processing [{inputs.parameters.item_index}] {{inputs.parameters.item}}')"
+                            "source": "print(f'Processing [{inputs.parameters.loop_iter.index}] {inputs.parameters.loop_iter.item}')"
                         }
                     },
                     "outputs": {

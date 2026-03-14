@@ -17,11 +17,11 @@ func TestExpandItems_Scalar(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(result))
 	}
-	if result[0]["item"] != "a.txt" {
-		t.Errorf("expected item=a.txt, got %v", result[0]["item"])
+	if result[0]["loop_iter.item"] != "a.txt" {
+		t.Errorf("expected loop_iter.item=a.txt, got %v", result[0]["loop_iter.item"])
 	}
-	if result[1]["item_index"] != 1 {
-		t.Errorf("expected item_index=1, got %v", result[1]["item_index"])
+	if result[1]["loop_iter.index"] != 1 {
+		t.Errorf("expected loop_iter.index=1, got %v", result[1]["loop_iter.index"])
 	}
 }
 
@@ -39,8 +39,13 @@ func TestExpandItems_Object(t *testing.T) {
 	if result[0]["key"] != "c.csv" {
 		t.Errorf("expected key=c.csv, got %v", result[0]["key"])
 	}
-	if result[0]["item_index"] != 0 {
-		t.Errorf("expected item_index=0, got %v", result[0]["item_index"])
+	// system key uses loop_iter. prefix — no collision with user object fields
+	if result[0]["loop_iter.index"] != 0 {
+		t.Errorf("expected loop_iter.index=0, got %v", result[0]["loop_iter.index"])
+	}
+	// loop_iter.item must NOT be set for object items
+	if _, exists := result[0]["loop_iter.item"]; exists {
+		t.Error("loop_iter.item should not be set for object items")
 	}
 }
 
@@ -73,8 +78,8 @@ func TestExpandItemsFrom_GoSlice(t *testing.T) {
 	if len(result) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(result))
 	}
-	if result[0]["item"] != "x.txt" {
-		t.Errorf("expected item=x.txt, got %v", result[0]["item"])
+	if result[0]["loop_iter.item"] != "x.txt" {
+		t.Errorf("expected loop_iter.item=x.txt, got %v", result[0]["loop_iter.item"])
 	}
 }
 
@@ -89,8 +94,8 @@ func TestExpandItemsFrom_JSONString(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(result))
 	}
-	if result[2]["item"] != "gamma" {
-		t.Errorf("expected item=gamma, got %v", result[2]["item"])
+	if result[2]["loop_iter.item"] != "gamma" {
+		t.Errorf("expected loop_iter.item=gamma, got %v", result[2]["loop_iter.item"])
 	}
 }
 
@@ -157,8 +162,8 @@ func TestExpandLoopIterations_Items(t *testing.T) {
 	if len(result) != 2 {
 		t.Fatalf("expected 2 iterations, got %d", len(result))
 	}
-	if result[0]["item"] != "file1.csv" {
-		t.Errorf("expected item=file1.csv, got %v", result[0]["item"])
+	if result[0]["loop_iter.item"] != "file1.csv" {
+		t.Errorf("expected loop_iter.item=file1.csv, got %v", result[0]["loop_iter.item"])
 	}
 }
 

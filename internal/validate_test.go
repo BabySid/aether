@@ -602,6 +602,122 @@ func TestValidate_LoopRepeatConditionNoConcurrency(t *testing.T) {
 	assertContains(t, err.Error(), "loop.concurrency is not allowed with repeatCondition")
 }
 
+// --- Parameter name validation ---
+
+func TestValidate_ParamName_Valid(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[1].Task.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "my-param"},
+			{Name: "myparam123"},
+			{Name: "ab"},
+		},
+	}
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected valid param names to pass, got: %v", err)
+	}
+}
+
+func TestValidate_ParamName_DotRejected(t *testing.T) {
+	// "loop_iter.index" fails DNS-1123: contains dot and underscore
+	wf := validWorkflow()
+	wf.Spec.Templates[1].Task.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "loop-iter.index"},
+		},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for param name containing dot")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_ParamName_UnderscoreRejected(t *testing.T) {
+	// underscore is not allowed by DNS-1123
+	wf := validWorkflow()
+	wf.Spec.Templates[1].Task.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "my_param"},
+		},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for param name containing underscore")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_ParamName_UppercaseRejected(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[1].Task.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "MyParam"},
+		},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for param name containing uppercase")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_ParamName_SpaceRejected(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[1].Task.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "my param"},
+		},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for param name containing space")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_MetadataName_DNS1123(t *testing.T) {
+	wf := validWorkflow()
+	wf.Metadata.Name = "Invalid_Name"
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for metadata.name with underscore")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_TemplateName_DNS1123(t *testing.T) {
+	wf := validWorkflow()
+	// inject a template with an invalid name
+	wf.Spec.Templates = append(wf.Spec.Templates, model.Template{
+		Task: &model.Task{
+			Name: "Bad_Template",
+			Executor: &model.Executor{
+				Type:   "script",
+				Config: json.RawMessage(`{"runtime":"bash","source":"echo"}`),
+			},
+		},
+	})
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for template name with underscore")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_TaskName_DNS1123(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[0].DAG.Tasks = append(wf.Spec.Templates[0].DAG.Tasks, model.Task{
+		Name:     "bad_task",
+		Template: "exec-a",
+	})
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for DAG task name with underscore")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
 // --- Helpers ---
 
 // assertContains checks if s contains substr.

@@ -65,10 +65,13 @@ func ExpandLoopIterations(ctx context.Context, loop *model.Loop, eval expr.Evalu
 //
 //	items = ["a.txt", {bucket:"s3://b", key:"c.csv"}]
 //
-//	Iteration 0 → {item:"a.txt",  item_index:0}
-//	Iteration 1 → {bucket:"s3://b", key:"c.csv", item_index:1}
+//	Iteration 0 → {loop_iter.item:"a.txt",  loop_iter.index:0}
+//	Iteration 1 → {bucket:"s3://b", key:"c.csv", loop_iter.index:1}
 //
 // maxIterations > 0 caps the expansion; 0 means unlimited.
+//
+// System-reserved keys use the "loop_iter." prefix so they can never collide with
+// user-defined object fields, which are restricted to [a-zA-Z0-9_-] by validate.go.
 func expandItems(items []any, maxIterations int) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
 	for i, item := range items {
@@ -83,10 +86,10 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 				params[k] = vv
 			}
 		default:
-			// Scalar items use "item" key
-			params["item"] = v
+			// Scalar items use the reserved "loop_iter.item" key
+			params["loop_iter.item"] = v
 		}
-		params["item_index"] = i
+		params["loop_iter.index"] = i
 		result = append(result, params)
 	}
 	return result
@@ -110,7 +113,7 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 //
 //	expandItemsFrom evaluates the expression → JSON string
 //	  → json.Unmarshal → []interface{}{"a.txt","b.txt","c.txt"}
-//	  → [{item:"a.txt", item_index:0}, {item:"b.txt", item_index:1}, ...]
+//	  → [{loop_iter.item:"a.txt", loop_iter.index:0}, {loop_iter.item:"b.txt", loop_iter.index:1}, ...]
 //
 // Called exclusively by ExpandLoopIterations when loop.ItemsFrom != "".
 // Returns an error if eval is nil, the expression fails, or the result is not an array.
@@ -150,9 +153,9 @@ func expandItemsFrom(ctx context.Context, expression string, eval expr.Evaluator
 				params[k] = vv
 			}
 		default:
-			params["item"] = v
+			params["loop_iter.item"] = v
 		}
-		params["item_index"] = i
+		params["loop_iter.index"] = i
 		result = append(result, params)
 	}
 	return result, nil
