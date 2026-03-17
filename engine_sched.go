@@ -73,6 +73,14 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 		// 3. If this scope is owned by a DAG container, check whether more tasks are
 		// now ready (i.e., all their declared dependencies are terminal).
 		// Skipped for parentRunID=0 (root scope) because the root has no DAG.
+		//
+		// Example — DAG "main": fetch → notify → alert
+		//   advanceScope is called after "fetch" completes (Succeeded).
+		//   At step 2, siblings=[fetch:Succeeded], no Pending tasks to activate.
+		//   Step 3 calls createReadyTasks:
+		//     - "notify" depends on "fetch" → fetch is terminal → notify is ready → CreateTaskRun(notify,Pending)
+		//     - "alert"  depends on "notify" → notify not yet terminal → not ready yet
+		//   After step 3: siblings=[fetch:Succeeded] (stale — notify was just added to the store)
 		if parentRunID != 0 {
 			if err := e.createReadyTasks(ctx, workflowRunID, wf, parentRunID, siblings); err != nil {
 				return err
@@ -81,6 +89,11 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 
 		// 4. Re-read siblings after createReadyTasks, which may have added new TaskRuns
 		// (newly ready tasks) or changed statuses (skipped tasks).
+		//
+		// Continuing the example above:
+		//   Before re-read: siblings=[fetch:Succeeded]           ← stale, misses "notify"
+		//   After  re-read: siblings=[fetch:Succeeded, notify:Pending]  ← fresh
+		//   The loop's next iteration (step 2) will then activate notify:Pending → dispatch it.
 		siblings, err = e.store.ListTaskRunsByParent(ctx, workflowRunID, parentRunID)
 		if err != nil {
 			return err
@@ -88,6 +101,13 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 
 		// 5. Root scope (parentRunID=0): finalize the workflow if all top-level tasks are
 		// terminal, otherwise wait.
+		//
+		// Example — workflow with a single top-level DAG "main":
+		//   advanceScope(parentRunID=0) is called when "main" (DAG container) becomes Succeeded.
+		//   siblings=[main:Succeeded] → allTerminal=true → finalizeWorkflow sets WF to Succeeded.
+		//
+		//   If "main" is still Running (some tasks inside are pending):
+		//   siblings=[main:Running] → allTerminal=false → return nil (wait for next event).
 		if parentRunID == 0 {
 			if allTerminal(siblings) {
 				e.finalizeWorkflow(ctx, workflowRunID, siblings, wf)
