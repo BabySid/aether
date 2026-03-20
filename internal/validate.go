@@ -34,7 +34,7 @@ const MaxNestingDepth = 10
 
 // Validate performs structural and semantic validation on a Workflow.
 func Validate(wf *model.Workflow) error {
-	if wf.APIVersion != "graph/v1" {
+	if wf.APIVersion != "aether/v1" {
 		return fmt.Errorf("unsupported apiVersion: %s", wf.APIVersion)
 	}
 	if wf.Kind != "Workflow" && wf.Kind != "CronWorkflow" && wf.Kind != "WorkflowTemplate" {
@@ -148,10 +148,11 @@ func validateDAG(wf *model.Workflow, dag *model.DAG) error {
 				return fmt.Errorf("task %q depends on unknown task %q", task.Name, dep)
 			}
 		}
-		if task.Template == "" {
-			return fmt.Errorf("task %q: template is required", task.Name)
+		// A DAG task must have either an inline executor OR a template reference.
+		if task.Template == "" && task.Executor == nil {
+			return fmt.Errorf("task %q: either template or executor is required", task.Name)
 		}
-		if FindTemplate(wf, task.Template) == nil {
+		if task.Template != "" && FindTemplate(wf, task.Template) == nil {
 			return fmt.Errorf("task %q references unknown template %q", task.Name, task.Template)
 		}
 	}

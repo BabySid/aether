@@ -478,7 +478,7 @@ func TestBuildRepeatEnv_NilLastRun(t *testing.T) {
 func TestBuildRepeatEnv_WithLastRun(t *testing.T) {
 	lastRun := &store.TaskRun{
 		TaskName: "do-work",
-		Status:   model.PhaseSucceeded,
+		Status:   phasePtr(model.PhaseSucceeded),
 		Outputs: &model.Outputs{
 			Code: 0,
 			Msg:  "ok",

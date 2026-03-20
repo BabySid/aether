@@ -148,10 +148,23 @@ func resolveFromPath(path string, rc *ResolveContext) (json.RawMessage, error) {
 }
 
 // resolveFromParameter resolves a value from workflow-level arguments.
+//
+// The name may be a bare parameter name (e.g. "username") or the full
+// dotted path used in valueFrom.parameter references:
+//
+//	"workflow.arguments.parameters.username"
+//
+// Both forms are accepted; the prefix is stripped before lookup.
 func resolveFromParameter(name string, rc *ResolveContext) (json.RawMessage, error) {
+	const prefix = "workflow.arguments.parameters."
+	bare := name
+	if strings.HasPrefix(name, prefix) {
+		bare = name[len(prefix):]
+	}
+
 	if rc.WfArgs != nil {
 		for _, p := range rc.WfArgs.Parameters {
-			if p.Name == name {
+			if p.Name == bare {
 				if len(p.Value) > 0 {
 					return p.Value, nil
 				}

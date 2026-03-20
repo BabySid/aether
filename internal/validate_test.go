@@ -13,7 +13,7 @@ import (
 // Tests can modify fields before calling Validate.
 func validWorkflow() *model.Workflow {
 	return &model.Workflow{
-		APIVersion: "graph/v1",
+		APIVersion: "aether/v1",
 		Kind:       "Workflow",
 		Metadata:   model.Metadata{Name: "test-wf"},
 		Spec: model.WorkflowSpec{
@@ -245,9 +245,9 @@ func TestValidate_TaskTemplateRequired(t *testing.T) {
 	}
 	err := Validate(wf)
 	if err == nil {
-		t.Fatal("expected error for empty task.Template")
+		t.Fatal("expected error for empty task.Template and nil executor")
 	}
-	assertContains(t, err.Error(), "template is required")
+	assertContains(t, err.Error(), "either template or executor is required")
 }
 
 func TestValidate_TaskTemplateNotFound(t *testing.T) {
@@ -301,7 +301,7 @@ func TestValidate_MultiTaskDAG(t *testing.T) {
 
 func TestValidate_NestedDAGValid(t *testing.T) {
 	wf := &model.Workflow{
-		APIVersion: "graph/v1",
+		APIVersion: "aether/v1",
 		Kind:       "Workflow",
 		Metadata:   model.Metadata{Name: "nested-wf"},
 		Spec: model.WorkflowSpec{
@@ -362,7 +362,7 @@ func TestValidate_NestingDepthAtLimit(t *testing.T) {
 	})
 
 	wf := &model.Workflow{
-		APIVersion: "graph/v1",
+		APIVersion: "aether/v1",
 		Kind:       "Workflow",
 		Metadata:   model.Metadata{Name: "deep-wf"},
 		Spec: model.WorkflowSpec{
@@ -399,7 +399,7 @@ func TestValidate_NestingDepthExceedsLimit(t *testing.T) {
 	})
 
 	wf := &model.Workflow{
-		APIVersion: "graph/v1",
+		APIVersion: "aether/v1",
 		Kind:       "Workflow",
 		Metadata:   model.Metadata{Name: "too-deep-wf"},
 		Spec: model.WorkflowSpec{
@@ -418,7 +418,7 @@ func TestValidate_NestingDepthViaLoop(t *testing.T) {
 	// dag-entry → loop-tmpl(body=inner-dag) → inner-dag(task→leaf)
 	// depth chain: entry(0) → loop(1) → inner-dag(2) → leaf(3)
 	wf := &model.Workflow{
-		APIVersion: "graph/v1",
+		APIVersion: "aether/v1",
 		Kind:       "Workflow",
 		Metadata:   model.Metadata{Name: "loop-nest-wf"},
 		Spec: model.WorkflowSpec{
@@ -463,7 +463,7 @@ func TestValidate_NestingDepthViaLoop(t *testing.T) {
 func loopWorkflow(loop *model.Loop) *model.Workflow {
 	loop.Name = "my-loop"
 	return &model.Workflow{
-		APIVersion: "graph/v1",
+		APIVersion: "aether/v1",
 		Kind:       "Workflow",
 		Metadata:   model.Metadata{Name: "loop-wf"},
 		Spec: model.WorkflowSpec{

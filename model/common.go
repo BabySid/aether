@@ -38,18 +38,20 @@ type Resources struct {
 	GPU    string `json:"gpu,omitempty"`
 }
 
-// Retry defines the retry policy.
+// Retry defines the retry policy for a leaf task (executor type only).
+// DAG and Loop containers do not support retry directly.
 type Retry struct {
-	Limit      int      `json:"limit,omitempty"`
-	Backoff    *Backoff `json:"backoff,omitempty"`
-	Expression string   `json:"expression,omitempty"`
-}
-
-// Backoff defines the backoff strategy for retries.
-type Backoff struct {
-	Duration    string  `json:"duration,omitempty"`    // e.g. "5s"
-	Factor      float64 `json:"factor,omitempty"`      // multiplier, e.g. 2.0
-	MaxDuration string  `json:"maxDuration,omitempty"` // e.g. "5m"
+	// Limit is the maximum number of retries. 0 means no retry.
+	Limit int `json:"limit,omitempty"`
+	// Expression is an optional boolean expression that controls when to retry.
+	// When set, a retry only occurs if this expression evaluates to true.
+	// The expression can reference the task's own execution result via:
+	//   tasks.<name>.phase                          — e.g. "Failed", "Error", "Timeout"
+	//   tasks.<name>.code                           — exit code
+	//   tasks.<name>.msg                            — error message
+	//   tasks.<name>.outputs.parameters.<param>     — output parameter value
+	// When omitted, any non-Succeeded phase triggers a retry (up to Limit).
+	Expression string `json:"expression,omitempty"`
 }
 
 // ContinueOn defines conditions under which execution continues despite failures.

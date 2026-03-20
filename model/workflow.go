@@ -2,7 +2,7 @@ package model
 
 // Workflow is the top-level resource for a graph workflow.
 type Workflow struct {
-	APIVersion string       `json:"apiVersion"` // graph/v1
+	APIVersion string       `json:"apiVersion"` // aether/v1
 	Kind       string       `json:"kind"`       // Workflow | CronWorkflow | WorkflowTemplate
 	Metadata   Metadata     `json:"metadata"`
 	Spec       WorkflowSpec `json:"spec,omitempty"`
@@ -13,7 +13,6 @@ type WorkflowSpec struct {
 	Entrypoint          string               `json:"entrypoint,omitempty"`
 	Arguments           *Arguments           `json:"arguments,omitempty"`
 	Timeout             string               `json:"timeout,omitempty"`
-	Retry               *Retry               `json:"retry,omitempty"`
 	Priority            int                  `json:"priority,omitempty"`
 	MaxNestedDepth      int                  `json:"maxNestedDepth,omitempty"`
 	Templates           []Template           `json:"templates,omitempty"`

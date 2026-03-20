@@ -361,7 +361,11 @@ func BuildRepeatEnv(iterIndex int, lastRun *store.TaskRun) map[string]any {
 		return env
 	}
 	prefix := "tasks." + lastRun.TaskName
-	env[prefix+".phase"] = string(lastRun.Status)
+	if lastRun.Status != nil {
+		env[prefix+".phase"] = string(*lastRun.Status)
+	} else {
+		env[prefix+".phase"] = ""
+	}
 	if lastRun.Outputs != nil {
 		env[prefix+".code"] = lastRun.Outputs.Code
 		env[prefix+".msg"] = lastRun.Outputs.Msg
