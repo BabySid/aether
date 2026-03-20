@@ -68,7 +68,17 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID uint64, 
 	env := internal.BuildTaskEnv(siblingRuns)
 	iterations, err := internal.ExpandLoopIterations(ctx, loop, e.exprEvaluator, env)
 	if err != nil {
-		return fmt.Errorf("expand loop %q: %w", loopTR.TemplateName, err)
+		// Expansion failed (e.g. expression error). Mark the loop as Error so the
+		// parent scope can detect a terminal state and progress rather than hanging.
+		errPhase := model.PhaseError
+		errMsg := fmt.Sprintf("expand loop %q: %v", loopTR.TemplateName, err)
+		_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:   loopTR.RunID,
+			Token:   loopTR.Token,
+			Status:  &errPhase,
+			Message: &errMsg,
+		})
+		return nil
 	}
 
 	// 3. Zero iterations: mark the loop as succeeded immediately.
