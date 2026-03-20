@@ -1,5 +1,5 @@
 {
-    "apiVersion": "graph/v1",
+    "apiVersion": "aether/v1",
     "kind": "Workflow",
     "metadata": {
         "name": "batch-process",
@@ -15,7 +15,15 @@
                     "name": "run-loop",
                     "items": ["report_jan.csv", "report_feb.csv", "report_mar.csv"],
                     "concurrency": 2,
-                    "body": "process-file"
+                    "body": "process-file",
+                    "arguments": {
+                        "parameters": [
+                            {
+                                "name": "filename",
+                                "value": "{{iterator.item}}"
+                            }
+                        ]
+                    }
                 }
             },
             {
@@ -33,7 +41,7 @@
                         "type": "script",
                         "config": {
                             "runtime": "python3",
-                            "source": "print(f'Processing [{inputs.parameters.loop_iter.index}] {inputs.parameters.loop_iter.item}')"
+                            "source": "print(f'Processing {inputs.parameters.filename}')"
                         }
                     },
                     "outputs": {

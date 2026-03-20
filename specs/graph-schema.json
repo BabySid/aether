@@ -365,9 +365,10 @@
                 "Failed",
                 "Error",
                 "Skipped",
-                "Timeout"
+                "Timeout",
+                "Cancelled"
             ],
-            "description": "Execution phase: Pending (awaiting), Running, Succeeded, Failed (business failure), Error (system error), Skipped (condition false), Timeout"
+            "description": "Execution phase: Pending (awaiting), Running, Succeeded, Failed (business failure), Error (system error), Skipped (when-condition false), Timeout, Cancelled (user/operator terminated via Cancel API)"
         },
         "metrics": {
             "type": "object",
@@ -445,44 +446,18 @@
         },
         "retry": {
             "type": "object",
+            "description": "Task-level retry policy. Only applies to leaf tasks (executor type); DAG/Loop containers do not support retry directly",
             "properties": {
                 "limit": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100,
                     "default": 0,
-                    "description": "Maximum retry count"
-                },
-                "backoff": {
-                    "$ref": "#/definitions/backoff",
-                    "description": "Backoff strategy"
+                    "description": "Maximum retry count. 0 means no retry"
                 },
                 "expression": {
                     "type": "string",
-                    "description": "Custom retry condition expression"
-                }
-            },
-            "additionalProperties": false
-        },
-        "backoff": {
-            "type": "object",
-            "properties": {
-                "duration": {
-                    "$ref": "#/definitions/duration",
-                    "default": "1s",
-                    "description": "Initial wait duration"
-                },
-                "factor": {
-                    "type": "number",
-                    "minimum": 1,
-                    "maximum": 10,
-                    "default": 2,
-                    "description": "Exponential factor"
-                },
-                "maxDuration": {
-                    "$ref": "#/definitions/duration",
-                    "default": "1m",
-                    "description": "Maximum wait duration"
+                    "description": "Custom retry condition expression. When set, retry only occurs if this expression evaluates to true. Can reference task outputs via tasks.<name>.phase, tasks.<name>.outputs.parameters.<param>, etc."
                 }
             },
             "additionalProperties": false
@@ -677,7 +652,7 @@
                 },
                 "retry": {
                     "$ref": "#/definitions/retry",
-                    "description": "Retry strategy. Falls back to workflowSpec.retry if not set"
+                    "description": "Task-level retry strategy. Only applies when executor is set (leaf tasks)"
                 },
                 "continueOn": {
                     "$ref": "#/definitions/continueOn",
@@ -1093,10 +1068,6 @@
                     "$ref": "#/definitions/duration",
                     "default": "1h",
                     "description": "Global timeout"
-                },
-                "retry": {
-                    "$ref": "#/definitions/retry",
-                    "description": "Global retry strategy fallback"
                 },
                 "priority": {
                     "type": "integer",

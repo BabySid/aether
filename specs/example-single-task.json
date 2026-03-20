@@ -1,5 +1,5 @@
 {
-    "apiVersion": "graph/v1",
+    "apiVersion": "aether/v1",
     "kind": "Workflow",
     "metadata": {
         "name": "send-greeting",
