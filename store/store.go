@@ -10,19 +10,8 @@ import (
 	"github.com/BabySid/aether/model"
 )
 
-var (
-	// ErrNotFound indicates the requested resource does not exist.
-	ErrNotFound = errors.New("not found")
-
-	// ErrCASConflict indicates a compare-and-swap conflict.
-	ErrCASConflict = errors.New("cas conflict")
-
-	// ErrAlreadyExists indicates the resource already exists.
-	// Returned by CreateTaskRun when a task run with the same
-	// (workflowRunID, parentRunID, taskName) already exists.
-	// Callers should treat this as a no-op (idempotent create).
-	ErrAlreadyExists = errors.New("already exists")
-)
+// ErrNotFound indicates the requested resource does not exist.
+var ErrNotFound = errors.New("not found")
 
 // Store is the aggregated storage interface. It is the single source of truth for all state.
 type Store interface {
@@ -40,46 +29,42 @@ type WorkflowRunStore interface {
 	// GetWorkflowRun retrieves a workflow run by ID.
 	GetWorkflowRun(ctx context.Context, runID uint64) (*WorkflowRun, error)
 
-	// UpdateWorkflowRunStatus updates the workflow run status.
-	UpdateWorkflowRunStatus(ctx context.Context, runID uint64, status model.Phase, msg string) error
+	// UpdateWorkflowRun persists mutable fields of a workflow run.
+	// Only non-nil pointer fields in run are written; nil fields are left unchanged.
+	// run.Token is passed to the implementation, which decides whether and how to use it
+	// (e.g., optimistic version check, or ignored for single-threaded stores).
+	// On success the returned WorkflowRun reflects the post-update state.
+	UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) (*WorkflowRun, error)
 
-	// UpdateWorkflowRunStatusCAS atomically updates status if current matches expected.
-	UpdateWorkflowRunStatusCAS(ctx context.Context, runID uint64, expected, target model.Phase, msg string) (bool, error)
-
-	// ListActiveWorkflowRuns returns all non-terminal workflow runs (for crash recovery).
+	// ListActiveWorkflowRuns returns all non-terminal workflow runs.
+	// Intended for crash recovery on engine restart; not yet wired into the engine.
 	ListActiveWorkflowRuns(ctx context.Context) ([]*WorkflowRun, error)
 }
 
 // TaskRunStore manages task run persistence.
 type TaskRunStore interface {
-	// CreateTaskRun creates a single task run, idempotent by
-	// (workflowRunID, parentRunID, taskName). If a task run with the same
-	// composite key already exists, implementations MUST return ErrAlreadyExists
-	// rather than creating a duplicate. Callers treat ErrAlreadyExists as a no-op.
+	// CreateTaskRun persists a new task run.
+	// The operation is idempotent by (workflowRunID, parentRunID, scope, taskName):
+	// if a task run with the same composite key already exists, implementations MUST
+	// return nil (treat it as a no-op) rather than creating a duplicate or returning
+	// an error. The framework relies on this contract for concurrent-safe scheduling.
+	//
+	// Using Scope as part of the key is critical for loop iterations: all iterations
+	// of a repeatCondition loop share the same taskName (the body template name), but
+	// each has a unique Scope (e.g. "poll-job.loop[0]/", "poll-job.loop[1]/"), so
+	// they are correctly distinguished without requiring an explicit iteration index field.
 	CreateTaskRun(ctx context.Context, run *TaskRun) error
 
 	// GetTaskRun retrieves a task run by ID.
 	GetTaskRun(ctx context.Context, taskRunID uint64) (*TaskRun, error)
 
-	// UpdateTaskRun updates a task run's mutable fields (status, outputs, metrics).
-	UpdateTaskRun(ctx context.Context, run *TaskRun) error
-
-	// UpdateTaskRunCAS atomically updates a task run's status from expected to target.
-	// Returns (true, nil) if the update succeeded, (false, nil) if the current status
-	// did not match expected (i.e., another writer already transitioned it).
-	// Used to guard idempotent state transitions such as Pending→Running and
-	// Running→Succeeded to prevent duplicate processing under concurrent advanceScope calls.
-	UpdateTaskRunCAS(ctx context.Context, taskRunID uint64, expected, target model.Phase, msg string) (bool, error)
-
-	// CompleteTaskRun atomically transitions a task from Running to a terminal phase
-	// and persists the execution result (outputs, metrics) in a single write.
-	//
-	// This is semantically equivalent to:
-	//   UpdateTaskRunCAS(Running → phase) + UpdateTaskRun(outputs)
-	// but avoids the window where status is terminal yet outputs are nil.
-	//
-	// Returns (true, nil) on success, (false, nil) if status != Running (duplicate/cancel race).
-	CompleteTaskRun(ctx context.Context, taskRunID uint64, phase model.Phase, msg string, outputs *model.Outputs, metrics *model.Metrics) (bool, error)
+	// UpdateTaskRun persists mutable fields of a task run.
+	// Only non-nil pointer fields in run are written; nil fields are left unchanged.
+	// run.Token is passed to the implementation, which decides whether and how to use it
+	// (e.g., optimistic version check, or ignored for single-threaded stores).
+	// Immutable fields (RunID, WorkflowRunID, ParentRunID, Scope, TaskName, etc.) are always ignored.
+	// On success the returned TaskRun reflects the post-update state.
+	UpdateTaskRun(ctx context.Context, run *TaskRun) (*TaskRun, error)
 
 	// ListTaskRuns returns all task runs for a given workflow run.
 	ListTaskRuns(ctx context.Context, workflowRunID uint64) ([]*TaskRun, error)
@@ -100,14 +85,26 @@ type WorkflowTemplateStore interface {
 // --- Persistent models ---
 
 // WorkflowRun represents a persisted workflow execution.
+//
+// Immutable fields (set at creation, never modified): RunID, Workflow, CreatedAt.
+// Mutable fields use pointer types: nil means "do not modify this field" in UpdateWorkflowRun.
 type WorkflowRun struct {
+	// Immutable
 	RunID     uint64
 	Workflow  json.RawMessage // immutable raw workflow JSON
-	Status    model.Phase
-	Message   string
-	Outputs   *model.Outputs
-	Metrics   *model.Metrics
 	CreatedAt time.Time
+
+	// Mutable (nil = do not modify in UpdateWorkflowRun)
+	Status  *model.Phase
+	Message *string
+	Outputs *model.Outputs
+	Metrics *model.Metrics
+
+	// Internal control
+	// Token is an opaque uint64 write token. The framework passes it through unchanged;
+	// the store implementation defines its semantics (e.g., monotonic version, seqno,
+	// timestamp, or ignored entirely for single-threaded stores).
+	Token     uint64
 	UpdatedAt time.Time
 }
 
@@ -118,7 +115,15 @@ type WorkflowRun struct {
 //   - Scoped scheduling: advanceScope only looks at sibling TaskRuns
 //   - Variable isolation: BuildScopedEnv only exposes same-scope outputs
 //   - Upward propagation: when all children complete, parent is finalized
+//
+// Immutable fields (set at creation, never modified):
+//
+//	RunID, WorkflowRunID, ParentRunID, Depth, Scope, TaskName,
+//	TemplateName, TemplateType, Inputs, CreatedAt.
+//
+// Mutable fields use pointer types: nil means "do not modify this field" in UpdateTaskRun.
 type TaskRun struct {
+	// Immutable
 	RunID         uint64
 	WorkflowRunID uint64
 	ParentRunID   uint64 // parent container TaskRun ID (0 = top-level scope)
@@ -127,12 +132,20 @@ type TaskRun struct {
 	TaskName      string // task name within current scope (unique among siblings)
 	TemplateName  string // referenced template name
 	TemplateType  string // "dag" / "task" / "loop"
-	Status        model.Phase
-	Message       string
 	Inputs        *model.Inputs
-	Outputs       *model.Outputs
-	Metrics       *model.Metrics
-	Version       int64 // CAS optimistic lock version
 	CreatedAt     time.Time
-	UpdatedAt     time.Time
+
+	// Mutable (nil = do not modify in UpdateTaskRun)
+	Status     *model.Phase
+	Message    *string
+	Outputs    *model.Outputs
+	Metrics    *model.Metrics
+	RetryCount *int // number of retries already consumed (0 = first attempt, 1 = first retry, …)
+
+	// Internal control
+	// Token is an opaque uint64 write token. The framework passes it through unchanged;
+	// the store implementation defines its semantics (e.g., monotonic version, seqno,
+	// timestamp, or ignored entirely for single-threaded stores).
+	Token     uint64
+	UpdatedAt time.Time
 }

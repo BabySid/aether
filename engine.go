@@ -95,16 +95,18 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error)
 
 	// 7. Generate workflow run ID and persist WorkflowRun
 	workflowRunID := e.idGen.Generate()
+	pendingPhase := model.PhasePending
 	run := &store.WorkflowRun{
 		RunID:    workflowRunID,
 		Workflow: rawJSON,
-		Status:   model.PhasePending,
+		Status:   &pendingPhase,
 	}
 	if err := e.store.CreateWorkflowRun(ctx, run); err != nil {
 		return 0, fmt.Errorf("aether: create workflow run: %w", err)
 	}
 
 	// 8. Create entry TaskRun (Pending, ParentRunID=0)
+	entryPending := model.PhasePending
 	entryTaskRun := &store.TaskRun{
 		RunID:         e.idGen.Generate(),
 		WorkflowRunID: workflowRunID,
@@ -114,7 +116,7 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (uint64, error)
 		TaskName:      wf.Spec.Entrypoint,
 		TemplateName:  wf.Spec.Entrypoint,
 		TemplateType:  templateType,
-		Status:        model.PhasePending,
+		Status:        &entryPending,
 	}
 	if err := e.store.CreateTaskRun(ctx, entryTaskRun); err != nil {
 		return 0, fmt.Errorf("aether: create entry task run: %w", err)
@@ -143,10 +145,18 @@ func (e *Engine) Get(ctx context.Context, workflowID uint64) (*WorkflowExecution
 	}
 
 	// 3. Assemble WorkflowExecution
+	var phase model.Phase
+	var msg string
+	if run.Status != nil {
+		phase = *run.Status
+	}
+	if run.Message != nil {
+		msg = *run.Message
+	}
 	exec := &WorkflowExecution{
 		WorkflowID: run.RunID,
-		Phase:      run.Status,
-		Msg:        run.Message,
+		Phase:      phase,
+		Msg:        msg,
 		Outputs:    run.Outputs,
 		Metrics:    run.Metrics,
 		Tasks:      make([]TaskExecution, 0, len(taskRuns)),
@@ -155,15 +165,19 @@ func (e *Engine) Get(ctx context.Context, workflowID uint64) (*WorkflowExecution
 	totalTasks := len(taskRuns)
 	completedTasks := 0
 	for _, tr := range taskRuns {
+		var taskPhase model.Phase
+		if tr.Status != nil {
+			taskPhase = *tr.Status
+		}
 		exec.Tasks = append(exec.Tasks, TaskExecution{
 			TaskID:   tr.RunID,
 			Name:     tr.TaskName,
 			Path:     tr.Scope + tr.TaskName,
 			Template: tr.TemplateName,
-			Phase:    tr.Status,
+			Phase:    taskPhase,
 			Metrics:  tr.Metrics,
 		})
-		if tr.Status.IsTerminal() {
+		if tr.Status != nil && tr.Status.IsTerminal() {
 			completedTasks++
 		}
 	}
@@ -187,11 +201,15 @@ func (e *Engine) Resume(ctx context.Context, workflowID uint64, taskID uint64, p
 	if tr.WorkflowRunID != workflowID {
 		return fmt.Errorf("aether: %w: task %d does not belong to workflow %d", ErrInvalidState, taskID, workflowID)
 	}
-	if tr.Status != model.PhaseRunning {
-		return fmt.Errorf("aether: %w: task %d is not in Running phase (current: %s)", ErrInvalidState, taskID, tr.Status)
+	if tr.Status == nil || *tr.Status != model.PhaseRunning {
+		status := model.Phase("<nil>")
+		if tr.Status != nil {
+			status = *tr.Status
+		}
+		return fmt.Errorf("aether: %w: task %d is not in Running phase (current: %s)", ErrInvalidState, taskID, status)
 	}
 
-	// 3. Build outputs from payload and mark as succeeded
+	// 3. Build outputs from payload and complete the task.
 	outputs := &model.Outputs{
 		Phase: model.PhaseSucceeded,
 	}
@@ -207,10 +225,18 @@ func (e *Engine) Resume(ctx context.Context, workflowID uint64, taskID uint64, p
 		outputs.Parameters = params
 	}
 
-	tr.Status = model.PhaseSucceeded
-	tr.Outputs = outputs
-	if err := e.store.UpdateTaskRun(ctx, tr); err != nil {
-		return fmt.Errorf("aether: update task run: %w", err)
+	succeeded := model.PhaseSucceeded
+	empty := ""
+	_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		RunID:   tr.RunID,
+		Token:   tr.Token,
+		Status:  &succeeded,
+		Message: &empty,
+		Outputs: outputs,
+	})
+	if err != nil {
+		// Token mismatch: another Resume or Cancel already transitioned this task — treat as no-op.
+		return nil
 	}
 
 	// 4. Advance the scope this task belongs to
@@ -228,8 +254,8 @@ func (e *Engine) Cancel(ctx context.Context, workflowID uint64) error {
 	if err != nil {
 		return fmt.Errorf("aether: %w", err)
 	}
-	if run.Status.IsTerminal() {
-		return fmt.Errorf("aether: %w: workflow %d already in terminal state %s", ErrInvalidState, workflowID, run.Status)
+	if run.Status != nil && run.Status.IsTerminal() {
+		return fmt.Errorf("aether: %w: workflow %d already in terminal state %s", ErrInvalidState, workflowID, *run.Status)
 	}
 
 	// 2. List all task runs
@@ -238,31 +264,58 @@ func (e *Engine) Cancel(ctx context.Context, workflowID uint64) error {
 		return fmt.Errorf("aether: list task runs: %w", err)
 	}
 
-	// 3. Cancel/skip non-terminal tasks
+	// 3. Cancel/skip non-terminal tasks.
+	//
+	// Running tasks: send cancellation signal to broker, then transition to
+	// PhaseCancelled (not PhaseError — the task was not broken, it was stopped).
+	// Using PhaseCancelled keeps Error semantics clean (system failures only) and
+	// prevents the retry policy from re-scheduling cancelled tasks.
+	//
+	// Pending tasks: transition directly to PhaseCancelled via Get+Update.
+	// They have not started yet, so no broker signal is needed.
+	// Previously these were set to PhaseSkipped, but Skipped means "when-condition
+	// evaluated to false" — a different semantic from user-initiated cancellation.
+	cancelled := model.PhaseCancelled
+	cancelMsg := "cancelled by user"
 	for _, tr := range taskRuns {
-		if tr.Status.IsTerminal() {
+		if tr.Status == nil || tr.Status.IsTerminal() {
 			continue
 		}
-		switch tr.Status {
+		switch *tr.Status {
 		case model.PhaseRunning:
 			_ = e.taskBroker.Cancel(ctx, tr.RunID)
-			tr.Status = model.PhaseError
-			tr.Message = "cancelled by user"
-			_ = e.store.UpdateTaskRun(ctx, tr)
+			_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+				RunID:   tr.RunID,
+				Token:   tr.Token,
+				Status:  &cancelled,
+				Message: &cancelMsg,
+			})
 		case model.PhasePending:
-			tr.Status = model.PhaseSkipped
-			tr.Message = "cancelled by user"
-			_ = e.store.UpdateTaskRun(ctx, tr)
+			_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+				RunID:   tr.RunID,
+				Token:   tr.Token,
+				Status:  &cancelled,
+				Message: &cancelMsg,
+			})
 		}
 	}
 
-	// 4. Mark workflow as Error and fire hooks
-	_ = e.store.UpdateWorkflowRunStatus(ctx, workflowID, model.PhaseError, "cancelled by user")
+	// 4. Mark workflow as Cancelled.
+	// Use Get + UpdateWorkflowRun to avoid overwriting a terminal status already set by finalizeWorkflow.
+	wfRun, err := e.store.GetWorkflowRun(ctx, workflowID)
+	if err == nil && (wfRun.Status == nil || !wfRun.Status.IsTerminal()) {
+		_, _ = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+			RunID:   wfRun.RunID,
+			Token:   wfRun.Token,
+			Status:  &cancelled,
+			Message: &cancelMsg,
+		})
+	}
 
 	var wf model.Workflow
 	if err := json.Unmarshal(run.Workflow, &wf); err == nil {
 		internal.FillDefaults(&wf)
-		internal.FireWorkflowHooks(ctx, e.hookNotifier, &wf, workflowID, model.PhaseError)
+		internal.FireWorkflowHooks(ctx, e.hookNotifier, &wf, workflowID, model.PhaseCancelled)
 	}
 
 	return nil
@@ -273,8 +326,8 @@ func (e *Engine) Cancel(ctx context.Context, workflowID uint64) error {
 // the WorkflowRun from Pending to Running, so that their Running state accurately
 // reflects the moment real work begins rather than the moment the task was dispatched.
 //
-// Both the leaf task CAS and the ancestor walk use CAS to remain idempotent under
-// concurrent or duplicate invocations.
+// Both the leaf task transition and the ancestor walk use Get+Update with Token to
+// remain idempotent under concurrent or duplicate invocations.
 //
 // # Call sites
 //
@@ -287,9 +340,17 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID uint64) {
 	if err != nil {
 		return
 	}
-	// 1. Transition the leaf task itself: Pending → Running.
-	// CAS ensures idempotency if OnTaskStarted is called more than once.
-	_, _ = e.store.UpdateTaskRunCAS(ctx, taskRunID, model.PhasePending, model.PhaseRunning, "")
+	// 1. Transition the leaf task itself: Pending → Running (idempotent via Token).
+	if tr.Status != nil && *tr.Status == model.PhasePending {
+		running := model.PhaseRunning
+		empty := ""
+		_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:   taskRunID,
+			Token:   tr.Token,
+			Status:  &running,
+			Message: &empty,
+		})
+	}
 	// 2. Transition ancestor containers (DAG/Loop) and the WorkflowRun: Pending → Running.
 	_ = e.markAncestorsRunning(ctx, tr.WorkflowRunID, tr.ParentRunID)
 }
@@ -313,34 +374,88 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID uint64) {
 // entrypoint DAG, so hooks on tasks inside nested DAGs are silently missed.
 // This will be fixed once scope-aware task resolution is implemented.
 func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult) {
-	// 1. Atomically persist result: Running → terminal phase + outputs in one write.
-	//
-	// CompleteTaskRun (CAS Running → phase + outputs) guards against:
-	//   a) Duplicate completion callbacks (network retries in distributed mode): only the
-	//      first call transitions Running→terminal; subsequent ones find status != Running and stop.
-	//   b) Cancel vs. Complete races: if Cancel already moved the task to Error, a late
-	//      completion callback cannot overwrite that terminal state.
-	//
-	// If CompleteTaskRun returns ok=false, skip all further processing — another writer
-	// has already handled the terminal transition.
+	// 1. Get current task run state first to check idempotency.
+	tr, err := e.store.GetTaskRun(ctx, result.TaskRunID)
+	if err != nil {
+		return
+	}
+	// Guard: only process if currently Running (duplicate callbacks or cancel race).
+	if tr.Status == nil || *tr.Status != model.PhaseRunning {
+		return
+	}
+
+	// 2. Persist result: Running → terminal phase + outputs.
 	var taskOutputs *model.Outputs
 	var taskMetrics *model.Metrics
 	if result.Outputs != nil {
 		taskOutputs = result.Outputs
 		taskMetrics = result.Outputs.Metrics
 	}
-	ok, err := e.store.CompleteTaskRun(ctx, result.TaskRunID, result.Phase, result.Message, taskOutputs, taskMetrics)
-	if err != nil || !ok {
-		// Either a store error or the task was already in a terminal/non-Running state.
+	phase := result.Phase
+	msg := result.Message
+	_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		RunID:   tr.RunID,
+		Token:   tr.Token,
+		Status:  &phase,
+		Message: &msg,
+		Outputs: taskOutputs,
+		Metrics: taskMetrics,
+	})
+	if err != nil {
+		// Token mismatch: another writer (Cancel or duplicate callback) already handled it.
 		return
 	}
 
-	tr, err := e.store.GetTaskRun(ctx, result.TaskRunID)
+	// Re-fetch to get updated state for downstream logic.
+	tr, err = e.store.GetTaskRun(ctx, result.TaskRunID)
 	if err != nil {
 		return
 	}
 
-	// 2. Fire task-level hooks (e.g., onSuccess, onFailure).
+	wf, err := e.loadWorkflow(ctx, tr.WorkflowRunID)
+	if err != nil {
+		return
+	}
+
+	// 3. Retry check: before firing hooks or advancing scope, determine whether the
+	// task should be retried.
+	//
+	// Retry only applies to leaf tasks (TemplateType == "task"). DAG and Loop
+	// containers are not retried directly.
+	//
+	// To find the retry policy we need the parent container's template name so we can
+	// look up the call-site task node in its DAG. For top-level tasks (ParentRunID==0)
+	// the parent template is the workflow entrypoint.
+	if tr.TemplateType == model.TemplateTypeTask {
+		parentTemplateName := wf.Spec.Entrypoint
+		if tr.ParentRunID != 0 {
+			parentTR, perr := e.store.GetTaskRun(ctx, tr.ParentRunID)
+			if perr == nil {
+				parentTemplateName = parentTR.TemplateName
+			}
+		}
+
+		retryPolicy := internal.ResolveRetryPolicy(wf, parentTemplateName, tr.TaskName)
+		needRetry, rerr := internal.ShouldRetry(ctx, tr, retryPolicy, e.exprEvaluator)
+		if rerr != nil {
+			// Expression evaluation failed — treat as non-retryable and fall through.
+			needRetry = false
+		}
+
+		if needRetry {
+			// Reset the task to Pending (increments RetryCount) and re-dispatch.
+			// Skip hooks and advanceScope — the task is not done yet.
+			if resetOK, _ := e.resetForRetry(ctx, tr.RunID); resetOK {
+				// Re-fetch to get updated RetryCount before dispatch.
+				if updatedTR, gerr := e.store.GetTaskRun(ctx, tr.RunID); gerr == nil {
+					_ = e.dispatchLeafTask(ctx, tr.WorkflowRunID, wf, updatedTR)
+				}
+			}
+			return
+		}
+	}
+
+	// 4. Fire task-level hooks (e.g., onSuccess, onFailure).
 	//
 	// Hooks are declared on the DAG task node (call-site), not on the template.
 	// Example DAG task with a hook:
@@ -352,20 +467,48 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	//
 	// TODO: look up the task from tr.ParentRunID's DAG template for correct
 	// nested-scope support. The current entrypoint-only lookup is a known gap.
-	wf, err := e.loadWorkflow(ctx, tr.WorkflowRunID)
-	if err != nil {
-		return
-	}
 	tmpl := internal.FindTemplate(wf, wf.Spec.Entrypoint)
 	if tmpl != nil && tmpl.DAG != nil {
 		task := internal.FindTask(tmpl.DAG, tr.TaskName)
-		internal.FireTaskHooks(ctx, e.hookNotifier, task, tr.WorkflowRunID, result.Phase)
+		taskPhase := result.Phase
+		internal.FireTaskHooks(ctx, e.hookNotifier, task, tr.WorkflowRunID, taskPhase)
 	}
 
-	// 3. Re-advance the scope this task belongs to.
+	// 5. Re-advance the scope this task belongs to.
 	// tr.ParentRunID identifies the scope (DAG/Loop container) that owns this task.
 	// advanceScope will find newly-ready tasks, or finalize the scope if all are done.
 	_ = e.advanceScope(ctx, tr.WorkflowRunID, wf, tr.ParentRunID)
+}
+
+// resetForRetry resets a terminal task back to Pending and increments RetryCount.
+// Returns (true, nil) on success, (false, nil) if the task is not eligible for retry
+// (not terminal, or already Cancelled), (false, err) on store error.
+func (e *Engine) resetForRetry(ctx context.Context, taskRunID uint64) (bool, error) {
+	tr, err := e.store.GetTaskRun(ctx, taskRunID)
+	if err != nil {
+		return false, err
+	}
+	// Business check: only Error/Timeout/Failed are retried; Cancelled is not.
+	if tr.Status == nil || !tr.Status.IsTerminal() || *tr.Status == model.PhaseCancelled {
+		return false, nil
+	}
+
+	pending := model.PhasePending
+	empty := ""
+	newCount := 0
+	if tr.RetryCount != nil {
+		newCount = *tr.RetryCount + 1
+	} else {
+		newCount = 1
+	}
+	_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		RunID:      tr.RunID,
+		Token:      tr.Token,
+		Status:     &pending,
+		Message:    &empty,
+		RetryCount: &newCount,
+	})
+	return err == nil, err
 }
 
 // loadWorkflow loads and deserializes the workflow from a WorkflowRun.

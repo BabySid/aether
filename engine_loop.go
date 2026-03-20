@@ -3,7 +3,6 @@ package aether
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/BabySid/aether/internal"
@@ -73,10 +72,19 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID uint64, 
 	}
 
 	// 3. Zero iterations: mark the loop as succeeded immediately.
+	// The loop is still Pending at this point (never dispatched a leaf task),
+	// so we update it directly without a token guard — no concurrent writer can
+	// have transitioned it yet.
 	if len(iterations) == 0 {
-		loopTR.Status = model.PhaseSucceeded
-		loopTR.Message = "loop had no iterations"
-		return e.store.UpdateTaskRun(ctx, loopTR)
+		succeeded := model.PhaseSucceeded
+		noIterMsg := "loop had no iterations"
+		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:   loopTR.RunID,
+			Token:   loopTR.Token,
+			Status:  &succeeded,
+			Message: &noIterMsg,
+		})
+		return err
 	}
 
 	// 4. Create one child TaskRun per iteration (Pending, ParentRunID = loopTR.RunID).
@@ -135,6 +143,7 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID uint64,
 	bodyTemplateType := internal.ResolveTemplateType(bodyTmpl)
 
 	iterScope := fmt.Sprintf("%s.loop[%d]/", loopTR.TaskName, iterIndex)
+	pendingPhase := model.PhasePending
 	iterRun := &store.TaskRun{
 		RunID:         e.idGen.Generate(),
 		WorkflowRunID: workflowRunID,
@@ -144,13 +153,9 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID uint64,
 		TaskName:      loop.Body,
 		TemplateName:  loop.Body,
 		TemplateType:  bodyTemplateType,
-		Status:        model.PhasePending,
+		Status:        &pendingPhase,
 	}
 	if err := e.store.CreateTaskRun(ctx, iterRun); err != nil {
-		if errors.Is(err, store.ErrAlreadyExists) {
-			// Concurrent spawnRepeatIteration already created this iteration — no-op.
-			return nil
-		}
 		return fmt.Errorf("create repeat iteration %d: %w", iterIndex, err)
 	}
 	return e.advanceScope(ctx, workflowRunID, wf, loopTR.RunID)
@@ -201,11 +206,16 @@ func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID uint64,
 		return false, nil
 	}
 
-	// Find the most recent iteration (last child) to use as the expression context.
+	// Find the last completed iteration by its deterministic Scope value.
+	// repeatCondition is serial, so the previous iteration's scope is always
+	// "<loopTaskName>.loop[<nextIndex-1>]/". Using Scope avoids relying on RunID
+	// ordering, which is an implementation detail of the ID generator.
+	lastScope := fmt.Sprintf("%s.loop[%d]/", parentTR.TaskName, nextIndex-1)
 	var lastRun *store.TaskRun
 	for _, c := range children {
-		if lastRun == nil || c.RunID > lastRun.RunID {
+		if c.Scope == lastScope {
 			lastRun = c
+			break
 		}
 	}
 
@@ -246,6 +256,7 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID uint64, l
 		iterInputs = &model.Inputs{Parameters: params}
 	}
 
+	iterPending := model.PhasePending
 	iterRun := &store.TaskRun{
 		RunID:         e.idGen.Generate(),
 		WorkflowRunID: workflowRunID,
@@ -255,14 +266,10 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID uint64, l
 		TaskName:      bodyName,
 		TemplateName:  bodyName,
 		TemplateType:  bodyTemplateType,
-		Status:        model.PhasePending,
+		Status:        &iterPending,
 		Inputs:        iterInputs,
 	}
 	if err := e.store.CreateTaskRun(ctx, iterRun); err != nil {
-		if errors.Is(err, store.ErrAlreadyExists) {
-			// Concurrent createIterationRun already created this slot — no-op.
-			return nil
-		}
 		return fmt.Errorf("create iteration %s: %w", iterScope+bodyName, err)
 	}
 	return nil
@@ -337,7 +344,7 @@ func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID uint6
 	// Count currently active (non-terminal) iterations.
 	activeCount := 0
 	for _, c := range children {
-		if !c.Status.IsTerminal() {
+		if c.Status == nil || !c.Status.IsTerminal() {
 			activeCount++
 		}
 	}

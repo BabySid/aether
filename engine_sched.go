@@ -63,7 +63,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 		// Containers (DAG/Loop) transition to Running and recurse into their child scope.
 		// Leaf tasks (type=task) are dispatched to the Broker directly.
 		for _, sib := range siblings {
-			if sib.Status == model.PhasePending {
+			if sib.Status != nil && *sib.Status == model.PhasePending {
 				if err := e.activateTaskRun(ctx, workflowRunID, wf, sib); err != nil {
 					return err
 				}
@@ -169,15 +169,25 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 
 		// 7. All children are terminal and no further iterations will be spawned.
 		// Aggregate children's results into the parent container's phase and walk up.
-		// Use CAS (Running → terminal) to guard against concurrent advanceScope calls
-		// that may both reach this point. Only the first one succeeds; others are no-ops.
+		// Use Get + UpdateTaskRun(Running → terminal) guarded by Token to prevent
+		// concurrent advanceScope calls from double-finalizing the container.
 		phase, msg := aggregatePhase(siblings)
-		ok, err := e.store.UpdateTaskRunCAS(ctx, parentTR.RunID, model.PhaseRunning, phase, msg)
+		tr, err := e.store.GetTaskRun(ctx, parentTR.RunID)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			// Another advanceScope already finalized this container — stop here.
+		// Guard: only finalize if still Running (another advanceScope may have already done it).
+		if tr.Status == nil || *tr.Status != model.PhaseRunning {
+			return nil
+		}
+		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:   tr.RunID,
+			Token:   tr.Token,
+			Status:  &phase,
+			Message: &msg,
+		})
+		if err != nil {
+			// Token mismatch: another advanceScope already finalized this container — stop here.
 			return nil
 		}
 
@@ -245,38 +255,74 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID uint64,
 		if err != nil {
 			return err
 		}
-		// CAS: Pending → Running. If another goroutine already transitioned this
-		// ancestor, ok=false and we stop walking — all further ancestors are also
-		// already Running or terminal.
-		ok, err := e.store.UpdateTaskRunCAS(ctx, ancestor.RunID, model.PhasePending, model.PhaseRunning, "")
-		if err != nil {
-			return err
+		// Only transition Pending → Running. If already Running or terminal, stop walking —
+		// all further ancestors are also already Running or terminal.
+		if ancestor.Status == nil || *ancestor.Status != model.PhasePending {
+			break
 		}
-		if !ok {
+		running := model.PhaseRunning
+		empty := ""
+		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:   ancestor.RunID,
+			Token:   ancestor.Token,
+			Status:  &running,
+			Message: &empty,
+		})
+		if err != nil {
+			// Token mismatch: another goroutine already transitioned this ancestor — stop walking.
 			break
 		}
 		parentRunID = ancestor.ParentRunID
 	}
 
-	// Promote the WorkflowRun from Pending to Running (idempotent via CAS).
-	if _, err := e.store.UpdateWorkflowRunStatusCAS(ctx, workflowRunID, model.PhasePending, model.PhaseRunning, ""); err != nil {
+	// Promote the WorkflowRun from Pending to Running (idempotent via Token).
+	wfRun, err := e.store.GetWorkflowRun(ctx, workflowRunID)
+	if err != nil {
 		return err
 	}
+	if wfRun.Status == nil || *wfRun.Status != model.PhasePending {
+		return nil
+	}
+	running := model.PhaseRunning
+	empty := ""
+	_, err = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+		RunID:   wfRun.RunID,
+		Token:   wfRun.Token,
+		Status:  &running,
+		Message: &empty,
+	})
+	// Token mismatch or already Running — either is fine, not an error.
+	_ = err
 	return nil
 }
 
 // finalizeWorkflow marks the workflow as complete based on top-level TaskRun results.
 //
-// Uses CAS (Running → terminal) to guard against double-finalization: in a local
-// synchronous broker, Dispatch calls OnTaskCompleted inline, which calls advanceScope
-// and may reach finalizeWorkflow before the outer advanceScope call returns. The CAS
-// ensures that only the first finalization succeeds and fires workflow-level hooks;
-// subsequent calls are no-ops because the WorkflowRun is no longer Running.
+// Uses Get + UpdateWorkflowRun(Running → terminal) guarded by Token to prevent
+// double-finalization: in a local synchronous broker, Dispatch calls OnTaskCompleted
+// inline, which calls advanceScope and may reach finalizeWorkflow before the outer
+// advanceScope call returns. The Token ensures that only the first finalization
+// succeeds and fires workflow-level hooks; subsequent calls are no-ops because
+// the WorkflowRun is no longer Running.
 func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID uint64, topLevelRuns []*store.TaskRun, wf *model.Workflow) {
 	phase, msg := aggregatePhase(topLevelRuns)
-	updated, err := e.store.UpdateWorkflowRunStatusCAS(ctx, workflowRunID, model.PhaseRunning, phase, msg)
-	if err != nil || !updated {
-		// Either a store error or the workflow was already finalized — either way, stop.
+
+	wfRun, err := e.store.GetWorkflowRun(ctx, workflowRunID)
+	if err != nil {
+		return
+	}
+	// Guard: only finalize if still Running.
+	if wfRun.Status == nil || *wfRun.Status != model.PhaseRunning {
+		return
+	}
+	_, err = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+		RunID:   wfRun.RunID,
+		Token:   wfRun.Token,
+		Status:  &phase,
+		Message: &msg,
+	})
+	if err != nil {
+		// Token mismatch: already finalized by another path — stop.
 		return
 	}
 
@@ -286,20 +332,34 @@ func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID uint64, top
 }
 
 // aggregatePhase determines the final phase from a set of terminal TaskRuns.
+//
+// Priority order (highest to lowest):
+//  1. Cancelled — any cancelled sibling means the scope was abandoned.
+//  2. Error     — system/infrastructure errors (includes Timeout).
+//  3. Failed    — business-level failure.
+//  4. Succeeded — all siblings completed normally (includes Skipped).
 func aggregatePhase(taskRuns []*store.TaskRun) (model.Phase, string) {
-	hasFailure := false
+	hasCancelled := false
 	hasError := false
+	hasFailure := false
 
 	for _, tr := range taskRuns {
-		if tr.Status == model.PhaseFailed {
-			hasFailure = true
+		if tr.Status == nil {
+			continue
 		}
-		if tr.Status == model.PhaseError || tr.Status == model.PhaseTimeout {
+		switch *tr.Status {
+		case model.PhaseCancelled:
+			hasCancelled = true
+		case model.PhaseError, model.PhaseTimeout:
 			hasError = true
+		case model.PhaseFailed:
+			hasFailure = true
 		}
 	}
 
 	switch {
+	case hasCancelled:
+		return model.PhaseCancelled, "one or more tasks were cancelled"
 	case hasError:
 		return model.PhaseError, "one or more tasks errored"
 	case hasFailure:
@@ -315,7 +375,7 @@ func allTerminal(taskRuns []*store.TaskRun) bool {
 		return false
 	}
 	for _, tr := range taskRuns {
-		if !tr.Status.IsTerminal() {
+		if tr.Status == nil || !tr.Status.IsTerminal() {
 			return false
 		}
 	}
