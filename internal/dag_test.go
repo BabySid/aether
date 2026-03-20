@@ -10,6 +10,9 @@ import (
 	"github.com/BabySid/aether/store"
 )
 
+// phasePtr is a test helper to take the address of a Phase value.
+func phasePtr(p model.Phase) *model.Phase { return &p }
+
 // ---- HasCycle ----
 
 func TestHasCycle_NoCycle(t *testing.T) {
@@ -226,7 +229,7 @@ func TestFindReadyTasks_DepSucceeded(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseSucceeded},
+		{TaskName: "a", Status: phasePtr(model.PhaseSucceeded)},
 	}
 	ready := FindReadyTasks(dag, existing)
 	// "a" already has a run → skip; "b"'s dep is Succeeded → ready
@@ -243,7 +246,7 @@ func TestFindReadyTasks_DepNotTerminal(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseRunning},
+		{TaskName: "a", Status: phasePtr(model.PhaseRunning)},
 	}
 	// "a" is still Running → "b" not ready
 	ready := FindReadyTasks(dag, existing)
@@ -260,7 +263,7 @@ func TestFindReadyTasks_DepFailedNoContinueOn(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseFailed},
+		{TaskName: "a", Status: phasePtr(model.PhaseFailed)},
 	}
 	// "a" failed with no continueOn → "b" not ready
 	ready := FindReadyTasks(dag, existing)
@@ -277,7 +280,7 @@ func TestFindReadyTasks_DepFailedWithUpstreamTaskContinueOn(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseFailed},
+		{TaskName: "a", Status: phasePtr(model.PhaseFailed)},
 	}
 	ready := FindReadyTasks(dag, existing)
 	if len(ready) != 1 || ready[0].Name != "b" {
@@ -294,7 +297,7 @@ func TestFindReadyTasks_DepFailedWithDAGContinueOn(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseFailed},
+		{TaskName: "a", Status: phasePtr(model.PhaseFailed)},
 	}
 	ready := FindReadyTasks(dag, existing)
 	if len(ready) != 1 || ready[0].Name != "b" {
@@ -341,7 +344,7 @@ func TestFindReadyTasks_EntrypointsDownstreamReady(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseSucceeded},
+		{TaskName: "a", Status: phasePtr(model.PhaseSucceeded)},
 	}
 	ready := FindReadyTasks(dag, existing)
 	names := make(map[string]bool)
@@ -361,7 +364,7 @@ func TestFindReadyTasks_AlreadyCreated(t *testing.T) {
 		Tasks: []model.Task{{Name: "a"}},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseSucceeded},
+		{TaskName: "a", Status: phasePtr(model.PhaseSucceeded)},
 	}
 	// "a" already has a run → nothing to create
 	ready := FindReadyTasks(dag, existing)
@@ -450,7 +453,7 @@ func TestEvalWhenCondition_NonBooleanResult(t *testing.T) {
 func TestEvalWhenCondition_UsesTaskRunEnv(t *testing.T) {
 	taskRun := &store.TaskRun{
 		TaskName: "checker",
-		Status:   model.PhaseSucceeded,
+		Status:   phasePtr(model.PhaseSucceeded),
 	}
 	var capturedEnv map[string]any
 	eval := &mockEvaluator{fn: func(expr string, env map[string]any) (any, error) {
@@ -477,7 +480,7 @@ func TestBuildTaskEnv_EmptyRuns(t *testing.T) {
 
 func TestBuildTaskEnv_PhaseKey(t *testing.T) {
 	runs := []*store.TaskRun{
-		{TaskName: "step-a", Status: model.PhaseSucceeded},
+		{TaskName: "step-a", Status: phasePtr(model.PhaseSucceeded)},
 	}
 	env := BuildTaskEnv(runs)
 	if env["tasks.step-a.phase"] != string(model.PhaseSucceeded) {
@@ -489,7 +492,7 @@ func TestBuildTaskEnv_OutputParameters(t *testing.T) {
 	runs := []*store.TaskRun{
 		{
 			TaskName: "step-a",
-			Status:   model.PhaseSucceeded,
+			Status:   phasePtr(model.PhaseSucceeded),
 			Outputs: &model.Outputs{
 				Code: 0,
 				Msg:  "ok",
@@ -514,8 +517,8 @@ func TestBuildTaskEnv_OutputParameters(t *testing.T) {
 
 func TestBuildTaskEnv_MultipleRuns(t *testing.T) {
 	runs := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseSucceeded},
-		{TaskName: "b", Status: model.PhaseFailed},
+		{TaskName: "a", Status: phasePtr(model.PhaseSucceeded)},
+		{TaskName: "b", Status: phasePtr(model.PhaseFailed)},
 	}
 	env := BuildTaskEnv(runs)
 	if env["tasks.a.phase"] != string(model.PhaseSucceeded) {
@@ -539,21 +542,21 @@ func minExec() *model.Executor { return &model.Executor{Type: "script"} }
 
 func TestBuildTaskAssignment_NoExecutorReturnsError(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{Name: "t"}} // no executor
+	taskDecl := &model.Task{Name: "t"} // no executor
 	wf := makeWorkflow(0)
 
-	_, err := BuildTaskAssignment(1, tr, tmpl, nil, wf)
+	_, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
 	if err == nil {
-		t.Error("expected error when template has no executor")
+		t.Error("expected error when task definition has no executor")
 	}
 }
 
 func TestBuildTaskAssignment_Basic(t *testing.T) {
 	tr := &store.TaskRun{RunID: 10, TaskName: "my-task", TemplateName: "my-tmpl"}
-	tmpl := &model.Template{Task: &model.Task{Name: "my-tmpl", Executor: minExec()}}
+	taskDecl := &model.Task{Name: "my-tmpl", Executor: minExec()}
 	wf := makeWorkflow(5)
 
-	a, err := BuildTaskAssignment(100, tr, tmpl, nil, wf)
+	a, err := BuildTaskAssignment(100, tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -573,13 +576,13 @@ func TestBuildTaskAssignment_Basic(t *testing.T) {
 
 func TestBuildTaskAssignment_ExecutorInfo(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{
+	taskDecl := &model.Task{
 		Name:     "t",
 		Executor: &model.Executor{Type: "function", Config: json.RawMessage(`{"fn":"main"}`)},
-	}}
+	}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, tmpl, nil, wf)
+	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -590,10 +593,10 @@ func TestBuildTaskAssignment_ExecutorInfo(t *testing.T) {
 
 func TestBuildTaskAssignment_TimeoutTemplateLevel(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{Name: "t", Timeout: "10m", Executor: minExec()}}
+	taskDecl := &model.Task{Name: "t", Timeout: "10m", Executor: minExec()}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, tmpl, nil, wf)
+	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -604,36 +607,36 @@ func TestBuildTaskAssignment_TimeoutTemplateLevel(t *testing.T) {
 
 func TestBuildTaskAssignment_TimeoutTaskOverridesTemplate(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{Name: "t", Timeout: "10m", Executor: minExec()}}
-	task := &model.Task{Name: "t", Timeout: "30s"}
+	taskDecl := &model.Task{Name: "t", Timeout: "10m", Executor: minExec()}
+	taskCall := &model.Task{Name: "t", Timeout: "30s"}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, tmpl, task, wf)
+	a, err := BuildTaskAssignment(1, tr, taskDecl, taskCall, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if a.Timeout != "30s" {
-		t.Errorf("expected task-level timeout 30s to override template 10m, got %q", a.Timeout)
+		t.Errorf("expected callSite timeout 30s to override definition 10m, got %q", a.Timeout)
 	}
 }
 
 func TestBuildTaskAssignment_TaskNilDoesNotPanic(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{Name: "t", Timeout: "5m", Executor: minExec()}}
+	taskDecl := &model.Task{Name: "t", Timeout: "5m", Executor: minExec()}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, tmpl, nil, wf)
+	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if a.Timeout != "5m" {
-		t.Errorf("expected template timeout 5m when task is nil, got %q", a.Timeout)
+		t.Errorf("expected definition timeout 5m when taskCall is nil, got %q", a.Timeout)
 	}
 }
 
 func TestBuildTaskAssignment_InputsMerged(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{
+	taskDecl := &model.Task{
 		Name:     "t",
 		Executor: minExec(),
 		Inputs: &model.Inputs{
@@ -642,8 +645,8 @@ func TestBuildTaskAssignment_InputsMerged(t *testing.T) {
 				{Name: "env", Default: rawJSON("dev")},
 			},
 		},
-	}}
-	task := &model.Task{
+	}
+	taskCall := &model.Task{
 		Name: "t",
 		Arguments: &model.Arguments{
 			Parameters: []model.Parameter{
@@ -653,7 +656,7 @@ func TestBuildTaskAssignment_InputsMerged(t *testing.T) {
 	}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, tmpl, task, wf)
+	a, err := BuildTaskAssignment(1, tr, taskDecl, taskCall, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -681,14 +684,14 @@ func TestBuildTaskAssignment_InputsMerged(t *testing.T) {
 
 func TestBuildTaskAssignment_Resources(t *testing.T) {
 	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
-	tmpl := &model.Template{Task: &model.Task{
+	taskDecl := &model.Task{
 		Name:      "t",
 		Executor:  minExec(),
 		Resources: &model.Resources{Memory: "512Mi"},
-	}}
+	}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, tmpl, nil, wf)
+	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -718,7 +721,7 @@ func TestFindReadyTasks_MixedContinueOnUpstreamOverridesDAG(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseFailed},
+		{TaskName: "a", Status: phasePtr(model.PhaseFailed)},
 	}
 	ready := FindReadyTasks(dag, existing)
 	if len(ready) != 1 || ready[0].Name != "b" {
@@ -735,7 +738,7 @@ func TestFindReadyTasks_TimeoutContinueOn(t *testing.T) {
 		},
 	}
 	existing := []*store.TaskRun{
-		{TaskName: "a", Status: model.PhaseTimeout},
+		{TaskName: "a", Status: phasePtr(model.PhaseTimeout)},
 	}
 	ready := FindReadyTasks(dag, existing)
 	if len(ready) != 1 || ready[0].Name != "b" {

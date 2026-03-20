@@ -130,7 +130,9 @@ func computeReachable(dag *model.DAG, entrypoints map[string]bool) map[string]bo
 func FindReadyTasks(dag *model.DAG, existingRuns []*store.TaskRun) []model.Task {
 	taskStatus := make(map[string]model.Phase)
 	for _, tr := range existingRuns {
-		taskStatus[tr.TaskName] = tr.Status
+		if tr.Status != nil {
+			taskStatus[tr.TaskName] = *tr.Status
+		}
 	}
 
 	// Build a name→task index for quick dep lookup
@@ -269,7 +271,11 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 	env := make(map[string]any)
 	for _, tr := range taskRuns {
 		prefix := "tasks." + tr.TaskName
-		env[prefix+".phase"] = string(tr.Status)
+		if tr.Status != nil {
+			env[prefix+".phase"] = string(*tr.Status)
+		} else {
+			env[prefix+".phase"] = ""
+		}
 		if tr.Outputs != nil {
 			env[prefix+".code"] = tr.Outputs.Code
 			env[prefix+".msg"] = tr.Outputs.Msg
@@ -292,33 +298,38 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 // information — it does not trigger any state transition. The state change Pending → Running
 // happens later, when the worker calls broker.StartTask after receiving the assignment.
 //
-// Three information sources are merged:
+// Two information sources are merged:
 //
-//   - tr    (TaskRun)  : runtime IDs (TaskRunID, WorkflowRunID), task/template name
-//   - tmpl  (Template) : definition defaults — executor, inputs, timeout, resources
-//   - task  (DAG node) : call-site overrides — task.Arguments overrides tmpl inputs defaults;
-//     task.Timeout overrides tmpl.Timeout
+//   - taskDecl      : definition layer — executor, inputs declaration, timeout default, resources.
+//     Either the named template's Task field (template-ref mode) or the inline DAG task
+//     node itself when it carries an executor (inline-executor mode).
+//   - taskCall : call-site layer — arguments and timeout override supplied by the DAG
+//     task node that references the template.  Nil when the task is a top-level entry or
+//     a loop iteration (no DAG task node exists at the call site).
 //
-// Example — template defines timeout=10m and env=dev; DAG node overrides timeout=30s and env=prod:
+// Example — taskDecl defines timeout=10m and env=dev; taskCall overrides timeout=30s and env=prod:
 //
-//	tmpl.inputs    = [{name:"region", default:"us-east-1"}, {name:"env", default:"dev"}]
-//	tmpl.timeout   = "10m"
-//	task.arguments = [{name:"env", value:"prod"}]
-//	task.timeout   = "30s"
+//	taskDecl.inputs      = [{name:"region", default:"us-east-1"}, {name:"env", default:"dev"}]
+//	taskDecl.timeout     = "10m"
+//	taskCall.arguments = [{name:"env", value:"prod"}]
+//	taskCall.timeout   = "30s"
 //
-//	→ assignment.Timeout = "30s"                                        (task overrides tmpl)
-//	→ assignment.Inputs  = [{name:"region", default:"us-east-1"},       (tmpl default kept)
-//	                         {name:"env",    value:"prod"}]              (task override wins)
+//	→ assignment.Timeout = "30s"                                           (callSite overrides def)
+//	→ assignment.Inputs  = [{name:"region", default:"us-east-1"},          (def default kept)
+//	                         {name:"env",    value:"prod"}]                 (callSite override wins)
 //
-// task may be nil when:
+// taskCall may be nil when:
 //   - ParentRunID == 0 (top-level task): no parent DAG node to look up.
 //   - Parent is a Loop: iterations are dispatched directly without a DAG task node.
 //
-// When task is nil, only template-level defaults (timeout, inputs, resources) apply.
-func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Template, task *model.Task, wf *model.Workflow) (*broker.TaskAssignment, error) {
-	exec := tmpl.GetExecutor()
+// When taskCall is nil, only definition-level defaults (timeout, inputs, resources) apply.
+func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, taskDecl *model.Task, taskCall *model.Task, wf *model.Workflow) (*broker.TaskAssignment, error) {
+	if taskDecl == nil {
+		return nil, fmt.Errorf("no task definition for task %q: cannot build assignment", tr.TaskName)
+	}
+	exec := taskDecl.Executor
 	if exec == nil {
-		return nil, fmt.Errorf("template %q has no executor: cannot build assignment for task %q", tmpl.GetName(), tr.TaskName)
+		return nil, fmt.Errorf("task definition %q has no executor: cannot build assignment for task %q", taskDecl.Name, tr.TaskName)
 	}
 
 	assignment := &broker.TaskAssignment{
@@ -331,21 +342,21 @@ func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, tmpl *model.Te
 		ExecutorConfig: exec.Config,
 	}
 
-	// Timeout: task-level overrides template-level (task may be nil)
-	timeout := tmpl.GetTimeout()
-	if task != nil && task.Timeout != "" {
-		timeout = task.Timeout
+	// Timeout: callSite-level overrides definition-level (taskCall may be nil)
+	timeout := taskDecl.Timeout
+	if taskCall != nil && taskCall.Timeout != "" {
+		timeout = taskCall.Timeout
 	}
 	assignment.Timeout = timeout
 
-	// Inputs: start with template inputs, merge task arguments on top
-	inputs := resolveInputs(tmpl.GetInputs(), task)
+	// Inputs: start with definition inputs, merge callSite arguments on top
+	inputs := resolveInputs(taskDecl.Inputs, taskCall)
 	if inputs != nil {
 		inputsJSON, _ := json.Marshal(inputs)
 		assignment.Inputs = inputsJSON
 	}
 
-	if res := tmpl.GetResources(); res != nil {
+	if res := taskDecl.Resources; res != nil {
 		resourcesJSON, _ := json.Marshal(res)
 		assignment.Resources = resourcesJSON
 	}

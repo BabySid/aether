@@ -3,7 +3,6 @@ package aether
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/BabySid/aether/internal"
@@ -90,7 +89,12 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 			templateType := ""
 			if taskTmpl != nil {
 				templateType = internal.ResolveTemplateType(taskTmpl)
+			} else if task.Executor != nil {
+				// Inline executor on the DAG task node — treat as a leaf task.
+				templateType = model.TemplateTypeTask
 			}
+			skippedPhase := model.PhaseSkipped
+			skipMsg := fmt.Sprintf("when condition %q evaluated to false", task.When)
 			skippedRun := &store.TaskRun{
 				RunID:         e.idGen.Generate(),
 				WorkflowRunID: workflowRunID,
@@ -100,10 +104,10 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 				TaskName:      task.Name,
 				TemplateName:  task.Template,
 				TemplateType:  templateType,
-				Status:        model.PhaseSkipped,
-				Message:       fmt.Sprintf("when condition %q evaluated to false", task.When),
+				Status:        &skippedPhase,
+				Message:       &skipMsg,
 			}
-			if err := e.store.CreateTaskRun(ctx, skippedRun); err != nil && !errors.Is(err, store.ErrAlreadyExists) {
+			if err := e.store.CreateTaskRun(ctx, skippedRun); err != nil {
 				return err
 			}
 		}
@@ -114,7 +118,11 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 			templateType := ""
 			if taskTmpl != nil {
 				templateType = internal.ResolveTemplateType(taskTmpl)
+			} else if task.Executor != nil {
+				// Inline executor on the DAG task node — treat as a leaf task.
+				templateType = model.TemplateTypeTask
 			}
+			pendingPhase := model.PhasePending
 			newRun := &store.TaskRun{
 				RunID:         e.idGen.Generate(),
 				WorkflowRunID: workflowRunID,
@@ -124,13 +132,9 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 				TaskName:      task.Name,
 				TemplateName:  task.Template,
 				TemplateType:  templateType,
-				Status:        model.PhasePending,
+				Status:        &pendingPhase,
 			}
 			if err := e.store.CreateTaskRun(ctx, newRun); err != nil {
-				if errors.Is(err, store.ErrAlreadyExists) {
-					// Another concurrent advanceScope already created this task — skip activation.
-					continue
-				}
 				return err
 			}
 			// Activate synchronously: containers enter Running + recurse; leaf tasks dispatch.
@@ -181,26 +185,31 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 //  4. Resolves "{{tasks.fetch.outputs.parameters.result}}" against sibling TaskRuns
 //  5. Dispatches the fully-resolved assignment to the Broker
 func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf *model.Workflow, tr *store.TaskRun) error {
-	// Step 1: Look up the task template definition (executor, inputs declaration, resources, etc.)
-	// tr.TemplateName is just a string reference; the actual definition lives in wf.spec.templates[].
-	taskTmpl := internal.FindTemplate(wf, tr.TemplateName)
-	if taskTmpl == nil {
-		return fmt.Errorf("template %q not found for task %q", tr.TemplateName, tr.TaskName)
+	// Step 1: Resolve the definition task (taskDecl) and call-site task (taskCall).
+	//
+	// A leaf task is either:
+	//   (a) template-ref mode:   tr.TemplateName points to a named template whose .Task field
+	//       carries the executor/inputs/resources/timeout declaration.
+	//   (b) inline-executor mode: the DAG task node itself carries the executor — there is no
+	//       separate template entry in wf.spec.templates.
+	//
+	// taskDecl     = the Task definition (executor, inputs declaration, resources, timeout default)
+	// taskCall = the DAG task node supplying arguments/timeout override; nil for top-level
+	//               tasks and loop iterations.
+	var taskDecl *model.Task
+	var taskCall *model.Task
+	isLoopIteration := false
+
+	// Named template reference: look up wf.spec.templates by name.
+	if tr.TemplateName != "" {
+		taskTmpl := internal.FindTemplate(wf, tr.TemplateName)
+		if taskTmpl != nil {
+			// Named template must be a Task-type template.
+			taskDecl = taskTmpl.Task
+		}
 	}
 
-	// Step 2: Look up the call-site task node in the parent DAG (if applicable).
-	//
-	// The template defines *what* inputs it accepts; the DAG task node defines *what values*
-	// to pass (arguments). These are intentionally separate:
-	//   - template "ding-alert" declares: inputs: [{ name: "channel" }]
-	//   - DAG task "notify" supplies:     arguments: [{ name: "channel", value: "ops-group" }]
-	//
-	// task is nil when:
-	//   - ParentRunID == 0 (top-level task): no parent DAG node to look up.
-	//   - Parent is a Loop: iteration parameters are pre-stored in tr.Inputs by
-	//     startLoopController; there is no DAG task node for loop iterations.
-	var task *model.Task
-	isLoopIteration := false
+	// Resolve parent context: call-site arguments (DAG mode) or loop iteration flag.
 	if tr.ParentRunID != 0 {
 		parentTR, err := e.store.GetTaskRun(ctx, tr.ParentRunID)
 		if err != nil {
@@ -208,24 +217,36 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf 
 		}
 		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
 		if parentTmpl != nil && parentTmpl.DAG != nil {
-			task = internal.FindTask(parentTmpl.DAG, tr.TaskName)
+			dagTask := internal.FindTask(parentTmpl.DAG, tr.TaskName)
+			if dagTask != nil {
+				// taskCall always provides call-site arguments / timeout override.
+				taskCall = dagTask
+				// Inline-executor mode: the DAG task node IS the definition when no named
+				// template was resolved above.
+				if taskDecl == nil && dagTask.Executor != nil {
+					taskDecl = dagTask
+				}
+			}
 		} else if parentTmpl != nil && parentTmpl.Loop != nil {
 			isLoopIteration = true
 		}
 	}
 
-	// Step 3: Merge template definition + call-site arguments into a TaskAssignment.
-	// Merging rules (BuildTaskAssignment):
-	//   - executor:  from taskTmpl.GetExecutor()
-	//   - timeout:   task.Timeout (call-site) overrides taskTmpl.GetTimeout() (template default)
-	//   - inputs:    template inputs declaration merged with task arguments (arguments win on conflict)
-	//   - resources: from taskTmpl.GetResources()
-	assignment, err := internal.BuildTaskAssignment(workflowRunID, tr, taskTmpl, task, wf)
+	if taskDecl == nil {
+		return fmt.Errorf("template %q not found for task %q", tr.TemplateName, tr.TaskName)
+	}
+
+	// Step 2: Merge definition + call-site into a TaskAssignment.
+	//   - executor:      from taskDecl.Executor
+	//   - timeout:       taskCall.Timeout overrides taskDecl.Timeout
+	//   - inputs:        taskDecl.Inputs merged with taskCall.Arguments (callSite wins)
+	//   - resources:     from taskDecl.Resources
+	assignment, err := internal.BuildTaskAssignment(workflowRunID, tr, taskDecl, taskCall, wf)
 	if err != nil {
 		return fmt.Errorf("build task assignment for %q: %w", tr.TaskName, err)
 	}
 
-	// Step 4: Resolve inputs.
+	// Step 3: Resolve inputs.
 	//
 	// For loop iterations, iteration parameters (loop_iter.index, item fields) were pre-stored in
 	// tr.Inputs by startLoopController. Use them directly — no expression resolution needed.
@@ -238,7 +259,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf 
 			inputsJSON, _ := json.Marshal(tr.Inputs)
 			assignment.Inputs = inputsJSON
 		}
-	} else if taskTmpl.GetInputs() != nil {
+	} else if taskDecl.Inputs != nil {
 		siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, tr.ParentRunID)
 		if err != nil {
 			return fmt.Errorf("list siblings for task %q input resolution: %w", tr.TaskName, err)
@@ -249,7 +270,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf 
 			TaskRuns:    siblingRuns, // sibling outputs available for expression binding
 			WfArgs:      wf.Spec.Arguments,
 		}
-		resolvedInputs, err := internal.ResolveInputs(ctx, taskTmpl.GetInputs(), rc)
+		resolvedInputs, err := internal.ResolveInputs(ctx, taskDecl.Inputs, rc)
 		if err != nil {
 			return fmt.Errorf("resolve inputs for task %q: %w", tr.TaskName, err)
 		}
@@ -259,7 +280,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf 
 		}
 	}
 
-	// Step 5: Dispatch the fully-resolved assignment to the task broker for execution.
+	// Step 4: Dispatch the fully-resolved assignment to the task broker for execution.
 	// Ancestor containers (DAG/Loop) and the WorkflowRun will transition from Pending
 	// to Running via OnTaskStarted, which is called by the broker/worker when execution
 	// actually begins — not here at dispatch time.
