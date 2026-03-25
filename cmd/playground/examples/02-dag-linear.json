@@ -16,6 +16,20 @@
             {
                 "dag": {
                     "name": "main",
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "summary",
+                                "type": "string",
+                                "valueFrom": {"parameter": "tasks.transform.outputs.parameters.summary"}
+                            },
+                            {
+                                "name": "sent",
+                                "type": "bool",
+                                "valueFrom": {"parameter": "tasks.notify.outputs.parameters.sent"}
+                            }
+                        ]
+                    },
                     "tasks": [
                         {
                             "name": "fetch",

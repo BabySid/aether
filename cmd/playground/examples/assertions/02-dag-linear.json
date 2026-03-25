@@ -3,6 +3,20 @@
   "expectTaskCount": 4,
   "expectTasks": [
     {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {
+          "name": "summary",
+          "value": "processed 2 records"
+        },
+        {
+          "name": "sent",
+          "value": true
+        }
+      ]
+    },
+    {
       "taskName": "fetch",
       "expectPhase": "Succeeded",
       "expectOutputs": [

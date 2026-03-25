@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/BabySid/aether/internal"
+	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
@@ -188,11 +189,35 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 		if tr.Status == nil || *tr.Status != model.PhaseRunning {
 			return nil
 		}
+
+		// For DAG containers, resolve dag.outputs.parameters valueFrom references
+		// using children's outputs. This populates the DAG container's Outputs so
+		// downstream tasks and the workflow itself can reference them.
+		var containerOutputs *model.Outputs
+		if parentTR.TemplateType == model.TemplateTypeDAG {
+			tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+			if tmpl != nil && tmpl.DAG != nil && tmpl.DAG.Outputs != nil {
+				env := binding.NewEnvBuilder().
+					WithWorkflowArgs(wf.Spec.Arguments).
+					WithSiblingTaskRuns(siblings).
+					Build()
+				collector := binding.NewCollector(e.exprEvaluator)
+				collected, _ := collector.CollectDAGOutputs(ctx, tmpl.DAG.Outputs, siblings, env)
+				if collected != nil {
+					containerOutputs = &model.Outputs{
+						Phase:       phase,
+						ExecOutputs: model.ExecOutputs{Parameters: collected.Parameters},
+					}
+				}
+			}
+		}
+
 		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   tr.RunID,
 			Token:   tr.Token,
 			Status:  &phase,
 			Message: &msg,
+			Outputs: containerOutputs,
 		})
 		if err != nil {
 			// Token mismatch: another advanceScope already finalized this container — stop here.

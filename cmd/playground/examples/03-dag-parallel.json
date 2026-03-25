@@ -16,6 +16,20 @@
             {
                 "dag": {
                     "name": "main",
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "merged",
+                                "type": "bool",
+                                "valueFrom": {"parameter": "tasks.join.outputs.parameters.merged"}
+                            },
+                            {
+                                "name": "total",
+                                "type": "int",
+                                "valueFrom": {"parameter": "tasks.join.outputs.parameters.total"}
+                            }
+                        ]
+                    },
                     "tasks": [
                         {
                             "name": "task-a",
