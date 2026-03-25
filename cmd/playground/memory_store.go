@@ -19,6 +19,7 @@ type SnapWorkflowRun struct {
 	Status    model.Phase    `json:"status"`
 	Message   string         `json:"message,omitempty"`
 	Outputs   *model.Outputs `json:"outputs,omitempty"`
+	Metrics   *model.Metrics `json:"metrics,omitempty"`
 	Token     uint64         `json:"token"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	CreatedAt time.Time      `json:"createdAt"`
@@ -119,6 +120,7 @@ func (m *MemoryStore) record(op string, entityID string) {
 			UpdatedAt: wfRun.UpdatedAt,
 			CreatedAt: wfRun.CreatedAt,
 			Outputs:   wfRun.Outputs,
+			Metrics:   wfRun.Metrics,
 		}
 		if wfRun.Status != nil {
 			sw.Status = *wfRun.Status

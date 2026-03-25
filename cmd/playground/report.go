@@ -268,6 +268,31 @@ func generateHTMLReport(data ReportData) string {
   </div>
   {{end}}
 
+  <!-- Workflow Summary -->
+  <div class="card" style="margin-bottom:1.25rem">
+    <h2>Workflow Summary</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Run ID</th><th>Phase</th><th>Outputs</th>
+          <th>Started</th><th>Finished</th><th>Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="font-family:monospace;font-size:.8rem;color:#a0aec0">{{.RunID}}</td>
+          <td><span class="badge {{phaseClass (execPhase .Execution)}}">{{execPhase .Execution}}</span></td>
+          <td style="font-size:.78rem;color:#4a5568;font-family:monospace;max-width:280px;word-break:break-all">
+            {{if .Execution.Outputs}}{{fmtParams .Execution.Outputs.Parameters}}{{else}}<span style="color:#cbd5e0">—</span>{{end}}
+          </td>
+          <td style="font-size:.8rem;color:#718096">{{if .Execution.Metrics}}{{.Execution.Metrics.StartedAt}}{{end}}</td>
+          <td style="font-size:.8rem;color:#718096">{{if .Execution.Metrics}}{{.Execution.Metrics.FinishedAt}}{{end}}</td>
+          <td style="font-size:.8rem;color:#718096">{{if .Execution.Metrics}}{{.Execution.Metrics.Duration}}{{end}}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
   <!-- Tasks Table -->
   <div class="card" style="margin-bottom:1.25rem">
     <h2>Task Executions</h2>
@@ -389,14 +414,22 @@ function renderWfTable(snap, prevWfIdx) {
   if (!snap.workflowRuns || snap.workflowRuns.length === 0) return '';
   var html = '<div class="snap-section-title">Workflow Runs (' + snap.workflowRuns.length + ')</div>'
     + '<table><thead><tr>'
-    + '<th>Run ID</th><th>Status</th><th>Message</th><th>Token</th><th>Updated At</th>'
+    + '<th>Run ID</th><th>Status</th><th>Outputs</th><th>Started</th><th>Finished</th><th>Duration</th><th>Message</th><th>Token</th><th>Updated At</th>'
     + '</tr></thead><tbody>';
   snap.workflowRuns.forEach(function(r) {
     var prev = prevWfIdx ? prevWfIdx[r.runID] : null;
     var rowCls = !prev ? ' class="row-new"' : '';
+    var outParams = r.outputs && r.outputs.parameters ? r.outputs.parameters : [];
+    var startedAt  = r.metrics ? (r.metrics.startedAt  || '') : '';
+    var finishedAt = r.metrics ? (r.metrics.finishedAt || '') : '';
+    var duration   = r.metrics ? (r.metrics.duration   || '') : '';
     html += '<tr' + rowCls + '>'
       + '<td><span style="font-family:monospace;font-size:.75rem;color:#a0aec0">' + r.runID + '</span></td>'
       + cell(prev, r, 'status',    badge(r.status))
+      + cell(prev, r, 'outputs',   '<span style="font-size:.75rem;font-family:monospace">' + fmtParams(outParams) + '</span>')
+      + cell(prev, r, 'metrics',   '<span style="font-size:.75rem;color:#718096">' + esc(startedAt) + '</span>')
+      + '<td><span style="font-size:.75rem;color:#718096">' + esc(finishedAt) + '</span></td>'
+      + '<td><span style="font-size:.75rem;color:#718096">' + esc(duration) + '</span></td>'
       + cell(prev, r, 'message',   esc(r.message))
       + cell(prev, r, 'token',     '<span style="font-size:.75rem;color:#a0aec0">' + r.token + '</span>')
       + cell(prev, r, 'updatedAt', '<span style="font-size:.75rem;color:#718096">' + esc(r.updatedAt) + '</span>')
