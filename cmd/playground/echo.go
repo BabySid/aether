@@ -164,9 +164,11 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 		inputLines = append(inputLines, fmt.Sprintf("%s(%s)=%s", p.Name, p.Type, string(p.Value)))
 	}
 	if len(inputLines) == 0 {
-		log.Printf("[echo] taskRunID=%s  inputs=(none) resumed=%v", req.TaskRunID, resumed)
+		log.Printf("[echo] taskRunID=%s taskName=%s templateName=%s  inputs=(none) resumed=%v",
+			req.TaskRunID, req.TaskName, req.TemplateName, resumed)
 	} else {
-		log.Printf("[echo] taskRunID=%s  inputs=[%s] resumed=%v", req.TaskRunID, strings.Join(inputLines, ", "), resumed)
+		log.Printf("[echo] taskRunID=%s taskName=%s templateName=%s  inputs=[%s] resumed=%v",
+			req.TaskRunID, req.TaskName, req.TemplateName, strings.Join(inputLines, ", "), resumed)
 	}
 
 	// ── Step 2b: suspend gate ────────────────────────────────────────────────
@@ -174,12 +176,14 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 	var cfg echoConfig
 	if len(req.Config) > 0 {
 		if err := json.Unmarshal(req.Config, &cfg); err != nil {
-			log.Printf("[echo] taskRunID=%s  WARNING: cannot parse config: %v", req.TaskRunID, err)
+			log.Printf("[echo] taskRunID=%s taskName=%s  WARNING: cannot parse config: %v",
+				req.TaskRunID, req.TaskName, err)
 		}
 	}
 
 	if cfg.Suspend && !resumed {
-		log.Printf("[echo] taskRunID=%s  suspended — call Resume with {%q: true} to continue", req.TaskRunID, resumedMarker)
+		log.Printf("[echo] taskRunID=%s taskName=%s  suspended — call Resume with {%q: true} to continue",
+			req.TaskRunID, req.TaskName, resumedMarker)
 		return &model.ExecOutputs{
 			Code:    model.ExecCodeSuspended,
 			Message: "suspended; awaiting external resume signal",
@@ -239,7 +243,8 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 	for _, p := range params {
 		outputLines = append(outputLines, fmt.Sprintf("%s(%s)=%s", p.Name, p.Type, string(p.Value)))
 	}
-	log.Printf("[echo] taskRunID=%s  outputs=[%s]", req.TaskRunID, strings.Join(outputLines, ", "))
+	log.Printf("[echo] taskRunID=%s taskName=%s templateName=%s  outputs=[%s]",
+		req.TaskRunID, req.TaskName, req.TemplateName, strings.Join(outputLines, ", "))
 
 	return &model.ExecOutputs{
 		Parameters: params,
