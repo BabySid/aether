@@ -6,8 +6,14 @@
       "taskName": "process-file",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "status", "value": "done"},
-        {"name": "rows",   "value": 100}
+        {
+          "name": "status",
+          "value": "done"
+        },
+        {
+          "name": "rows",
+          "value": 100
+        }
       ]
     }
   ]

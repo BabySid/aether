@@ -6,22 +6,40 @@
       "taskName": "task-a",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "result", "value": {"source": "A", "value": 10}}
+        {
+          "name": "result",
+          "value": {
+            "source": "A",
+            "value": 10
+          }
+        }
       ]
     },
     {
       "taskName": "task-b",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "result", "value": {"source": "B", "value": 20}}
+        {
+          "name": "result",
+          "value": {
+            "source": "B",
+            "value": 20
+          }
+        }
       ]
     },
     {
       "taskName": "join",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "merged", "value": true},
-        {"name": "total",  "value": 30}
+        {
+          "name": "merged",
+          "value": true
+        },
+        {
+          "name": "total",
+          "value": 30
+        }
       ]
     }
   ]

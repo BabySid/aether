@@ -5,14 +5,20 @@
       "taskName": "check",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "status", "value": "ok"}
+        {
+          "name": "status",
+          "value": "ok"
+        }
       ]
     },
     {
       "taskName": "path-ok",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "msg", "value": "ok path executed"}
+        {
+          "name": "msg",
+          "value": "ok path executed"
+        }
       ]
     },
     {

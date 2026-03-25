@@ -5,7 +5,10 @@
       "taskName": "run",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "ran", "value": true}
+        {
+          "name": "ran",
+          "value": true
+        }
       ]
     }
   ]

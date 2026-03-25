@@ -5,22 +5,34 @@
       "taskName": "step-a",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "status", "value": "ok"}
+        {
+          "name": "status",
+          "value": "ok"
+        }
       ]
     },
     {
       "taskName": "step-b",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "code",   "value": 2},
-        {"name": "reason", "value": "intentional failure"}
+        {
+          "name": "code",
+          "value": 2
+        },
+        {
+          "name": "reason",
+          "value": "intentional failure"
+        }
       ]
     },
     {
       "taskName": "step-c",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "status", "value": "ok"}
+        {
+          "name": "status",
+          "value": "ok"
+        }
       ]
     }
   ]

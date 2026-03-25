@@ -6,21 +6,33 @@
       "taskName": "step1",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "val", "value": 42}
+        {
+          "name": "val",
+          "value": 42
+        }
       ]
     },
     {
       "taskName": "step2",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "result", "value": {"val": 42, "doubled": 84}}
+        {
+          "name": "result",
+          "value": {
+            "val": 42,
+            "doubled": 84
+          }
+        }
       ]
     },
     {
       "taskName": "final",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "done", "value": true}
+        {
+          "name": "done",
+          "value": true
+        }
       ]
     }
   ]

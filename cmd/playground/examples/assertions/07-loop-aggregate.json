@@ -6,16 +6,28 @@
       "taskName": "score-item",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "score", "value": 95}
+        {
+          "name": "score",
+          "value": 95
+        }
       ]
     },
     {
       "taskName": "summarize",
       "expectPhase": "Succeeded",
       "expectOutputs": [
-        {"name": "avg",   "value": 95},
-        {"name": "total", "value": 3},
-        {"name": "ok",    "value": true}
+        {
+          "name": "avg",
+          "value": 95
+        },
+        {
+          "name": "total",
+          "value": 3
+        },
+        {
+          "name": "ok",
+          "value": true
+        }
       ]
     }
   ]
