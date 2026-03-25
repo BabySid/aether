@@ -2,10 +2,11 @@ package aether
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/BabySid/aether/internal"
+	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
@@ -41,12 +42,9 @@ import (
 // After B is skipped, C's dependency on B is satisfied. The loop refreshes
 // siblings and re-evaluates so C gets created without waiting for the next
 // external event.
-func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf *model.Workflow, parentRunID uint64, siblings []*store.TaskRun) error {
-	// parentTR and tmpl.DAG don't change across loop iterations — resolve once.
-	parentTR, err := e.store.GetTaskRun(ctx, parentRunID)
-	if err != nil {
-		return err
-	}
+func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID string, wf *model.Workflow, parentTR *store.TaskRun, siblings []*store.TaskRun) error {
+	// parentTR is passed in by the caller (advanceScope already has it); no extra GetTaskRun needed.
+	parentRunID := parentTR.RunID
 	tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
 	if tmpl == nil || tmpl.DAG == nil {
 		// Parent is not a DAG (e.g., a Loop scope is handled elsewhere).
@@ -150,9 +148,10 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 
 		// Some tasks were skipped — their dependents may be newly ready.
 		// Refresh siblings (which now include the freshly-skipped TaskRuns) and loop.
-		siblings, err = e.store.ListTaskRunsByParent(ctx, workflowRunID, parentRunID)
-		if err != nil {
-			return err
+		var sibErr error
+		siblings, sibErr = e.store.ListTaskRunsByParent(ctx, workflowRunID, parentRunID)
+		if sibErr != nil {
+			return sibErr
 		}
 	}
 }
@@ -184,7 +183,7 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID uint64, wf 
 //  3. Builds assignment merging both: executor + merged inputs
 //  4. Resolves "{{tasks.fetch.outputs.parameters.result}}" against sibling TaskRuns
 //  5. Dispatches the fully-resolved assignment to the Broker
-func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf *model.Workflow, tr *store.TaskRun) error {
+func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf *model.Workflow, tr *store.TaskRun) error {
 	// Step 1: Resolve the definition task (taskDecl) and call-site task (taskCall).
 	//
 	// A leaf task is either:
@@ -196,41 +195,18 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf 
 	// taskDecl     = the Task definition (executor, inputs declaration, resources, timeout default)
 	// taskCall = the DAG task node supplying arguments/timeout override; nil for top-level
 	//               tasks and loop iterations.
-	var taskDecl *model.Task
-	var taskCall *model.Task
-	isLoopIteration := false
-
-	// Named template reference: look up wf.spec.templates by name.
-	if tr.TemplateName != "" {
-		taskTmpl := internal.FindTemplate(wf, tr.TemplateName)
-		if taskTmpl != nil {
-			// Named template must be a Task-type template.
-			taskDecl = taskTmpl.Task
-		}
-	}
-
-	// Resolve parent context: call-site arguments (DAG mode) or loop iteration flag.
-	if tr.ParentRunID != 0 {
-		parentTR, err := e.store.GetTaskRun(ctx, tr.ParentRunID)
+	// Resolve taskDecl (definition) and taskCall (call-site arguments).
+	// parentTR is fetched here rather than inside ResolveTaskDecl so that any
+	// store error can be wrapped with task-specific context.
+	var parentTR *store.TaskRun
+	if tr.ParentRunID != "" {
+		var err error
+		parentTR, err = e.store.GetTaskRun(ctx, tr.ParentRunID)
 		if err != nil {
-			return fmt.Errorf("get parent TaskRun %d for task %q: %w", tr.ParentRunID, tr.TaskName, err)
-		}
-		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
-		if parentTmpl != nil && parentTmpl.DAG != nil {
-			dagTask := internal.FindTask(parentTmpl.DAG, tr.TaskName)
-			if dagTask != nil {
-				// taskCall always provides call-site arguments / timeout override.
-				taskCall = dagTask
-				// Inline-executor mode: the DAG task node IS the definition when no named
-				// template was resolved above.
-				if taskDecl == nil && dagTask.Executor != nil {
-					taskDecl = dagTask
-				}
-			}
-		} else if parentTmpl != nil && parentTmpl.Loop != nil {
-			isLoopIteration = true
+			return fmt.Errorf("get parent TaskRun %q for task %q: %w", tr.ParentRunID, tr.TaskName, err)
 		}
 	}
+	taskDecl, taskCall, isLoopIteration := internal.ResolveTaskDecl(wf, tr, parentTR)
 
 	if taskDecl == nil {
 		return fmt.Errorf("template %q not found for task %q", tr.TemplateName, tr.TaskName)
@@ -246,41 +222,69 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID uint64, wf 
 		return fmt.Errorf("build task assignment for %q: %w", tr.TaskName, err)
 	}
 
-	// Step 3: Resolve inputs.
+	// Step 3: Resolve inputs via binding.Binder.
 	//
-	// For loop iterations, iteration parameters (loop_iter.index, item fields) were pre-stored in
-	// tr.Inputs by startLoopController. Use them directly — no expression resolution needed.
+	// For loop iterations, iteration parameters (loop_iter.index, item fields) were pre-stored
+	// in tr.Inputs by startLoopController. Use them directly — no further resolution needed.
 	//
-	// For DAG tasks, input values may contain expressions referencing sibling outputs, e.g.:
-	//   inputs.parameters[*].valueFrom.expression: "{{tasks.review.outputs.parameters.decision}}"
-	// siblingRuns provides the evaluation context; wf.Spec.Arguments provides workflow-level args.
+	// For all other tasks (DAG tasks, top-level tasks), build an EvalEnv from workflow args and
+	// sibling TaskRun outputs, then let Binder merge taskDecl.Inputs with taskCall.Arguments and
+	// resolve any valueFrom references (expression, parameter, path, secretKeyRef).
+	var callSiteArgs *model.Arguments
+	if taskCall != nil {
+		callSiteArgs = taskCall.Arguments
+	}
+
 	if isLoopIteration {
-		if tr.Inputs != nil {
-			inputsJSON, _ := json.Marshal(tr.Inputs)
-			assignment.Inputs = inputsJSON
-		}
-	} else if taskDecl.Inputs != nil {
+		// Iteration params are already in tr.Inputs; forward as-is.
+		assignment.Inputs = tr.Inputs
+	} else {
 		siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, tr.ParentRunID)
 		if err != nil {
 			return fmt.Errorf("list siblings for task %q input resolution: %w", tr.TaskName, err)
 		}
-		rc := &internal.ResolveContext{
-			Eval:        e.exprEvaluator,
-			SecretStore: e.secretStore,
-			TaskRuns:    siblingRuns, // sibling outputs available for expression binding
-			WfArgs:      wf.Spec.Arguments,
-		}
-		resolvedInputs, err := internal.ResolveInputs(ctx, taskDecl.Inputs, rc)
+		env := binding.NewEnvBuilder().
+			WithWorkflowArgs(wf.Spec.Arguments).
+			WithSiblingTaskRuns(siblingRuns).
+			Build()
+		binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
+		resolvedInputs, err := binder.Bind(ctx, taskDecl.Inputs, callSiteArgs, env)
 		if err != nil {
 			return fmt.Errorf("resolve inputs for task %q: %w", tr.TaskName, err)
 		}
-		if resolvedInputs != nil {
-			inputsJSON, _ := json.Marshal(resolvedInputs)
-			assignment.Inputs = inputsJSON
+		if resolvedInputs != nil && len(resolvedInputs.Parameters) > 0 {
+			assignment.Inputs = resolvedInputs
 		}
 	}
 
-	// Step 4: Dispatch the fully-resolved assignment to the task broker for execution.
+	// Step 4: Persist resolved inputs + deadline in a single UpdateTaskRun call before
+	// dispatching. Writing the Deadline here (before Dispatch) ensures the timeout
+	// watchdog can detect it even if the Broker/Executor crashes right after Dispatch.
+	var updateInputs *model.Inputs
+	if assignment.Inputs != nil {
+		updateInputs = assignment.Inputs
+	}
+	var updateDeadline *time.Time
+	if assignment.Timeout != "" {
+		if d, parseErr := internal.ParseDuration(assignment.Timeout); parseErr == nil && d > 0 {
+			dl := time.Now().Add(d)
+			updateDeadline = &dl
+		}
+	}
+	if updateInputs != nil || updateDeadline != nil {
+		updated, _ := e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:    tr.RunID,
+			Token:    tr.Token,
+			Inputs:   updateInputs,
+			Deadline: updateDeadline,
+		})
+		// Use the returned token for any subsequent writes; fall back to original tr if update failed.
+		if updated != nil {
+			tr = updated
+		}
+	}
+
+	// Step 5: Dispatch the fully-resolved assignment to the task broker for execution.
 	// Ancestor containers (DAG/Loop) and the WorkflowRun will transition from Pending
 	// to Running via OnTaskStarted, which is called by the broker/worker when execution
 	// actually begins — not here at dispatch time.

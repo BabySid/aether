@@ -1,0 +1,27 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 5,
+  "expectTasks": [
+    {
+      "taskName": "step1",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "val", "value": 42}
+      ]
+    },
+    {
+      "taskName": "step2",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "result", "value": {"val": 42, "doubled": 84}}
+      ]
+    },
+    {
+      "taskName": "final",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "done", "value": true}
+      ]
+    }
+  ]
+}

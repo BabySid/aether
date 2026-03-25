@@ -1,0 +1,128 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "nested-dag",
+        "annotations": {
+            "description": "Nested DAG: outer DAG calls inner DAG template; inner outputs propagate to outer downstream task",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-count": "5"
+        }
+    },
+    "spec": {
+        "entrypoint": "outer",
+        "templates": [
+            {
+                "dag": {
+                    "name": "outer",
+                    "tasks": [
+                        {
+                            "name": "sub",
+                            "template": "inner-dag"
+                        },
+                        {
+                            "name": "final",
+                            "template": "finalize",
+                            "dependencies": ["sub"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "result",
+                                        "valueFrom": {"parameter": "tasks.sub.outputs.parameters.result"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "dag": {
+                    "name": "inner-dag",
+                    "tasks": [
+                        {
+                            "name": "step1",
+                            "template": "inner-step-a"
+                        },
+                        {
+                            "name": "step2",
+                            "template": "inner-step-b",
+                            "dependencies": ["step1"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "val",
+                                        "valueFrom": {"parameter": "tasks.step1.outputs.parameters.val"}
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "result",
+                                "type": "object",
+                                "valueFrom": {"parameter": "tasks.step2.outputs.parameters.result"}
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "inner-step-a",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "val", "type": "int", "value": 42}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "val", "type": "int"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "inner-step-b",
+                    "inputs": {
+                        "parameters": [{"name": "val", "type": "int"}]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "result", "type": "object", "value": {"val": 42, "doubled": 84}}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "object"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "finalize",
+                    "inputs": {
+                        "parameters": [{"name": "result", "type": "object"}]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "done", "type": "bool", "value": true}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "done", "type": "bool"}]
+                    }
+                }
+            }
+        ]
+    }
+}

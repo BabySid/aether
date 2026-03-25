@@ -1,0 +1,111 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "loop-aggregate-list",
+        "annotations": {
+            "description": "Loop aggregate=list: collect each iteration result into an array for downstream use",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-count": "5"
+        }
+    },
+    "spec": {
+        "entrypoint": "pipeline",
+        "templates": [
+            {
+                "dag": {
+                    "name": "pipeline",
+                    "tasks": [
+                        {
+                            "name": "batch",
+                            "template": "score-loop"
+                        },
+                        {
+                            "name": "summarize",
+                            "template": "collect",
+                            "dependencies": ["batch"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "scores",
+                                        "valueFrom": {"parameter": "tasks.batch.outputs.parameters.score"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "loop": {
+                    "name": "score-loop",
+                    "items": ["item-1", "item-2", "item-3"],
+                    "concurrency": 3,
+                    "body": "score-item",
+                    "arguments": {
+                        "parameters": [
+                            {"name": "item", "value": "{{iterator.item}}"}
+                        ]
+                    },
+                    "aggregate": {
+                        "strategy": "list",
+                        "parameters": ["score"]
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "score", "type": "array"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "score-item",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "item", "type": "string"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "score", "type": "int", "value": 95}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "score", "type": "int"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "collect",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "scores", "type": "array"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "avg",   "type": "int",    "value": 95},
+                                {"name": "total", "type": "int",    "value": 3},
+                                {"name": "ok",    "type": "bool",   "value": true}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "avg",   "type": "int"},
+                            {"name": "total", "type": "int"},
+                            {"name": "ok",    "type": "bool"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

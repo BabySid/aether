@@ -23,7 +23,7 @@ const (
 // Event is the payload for Notifier.Notify.
 type Event struct {
 	HookType   Type
-	WorkflowID uint64
+	WorkflowID string
 	Template   string
 	Context    map[string]any
 }

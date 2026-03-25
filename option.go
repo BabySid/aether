@@ -9,6 +9,7 @@ import (
 	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/secret"
 	"github.com/BabySid/aether/store"
+	"github.com/BabySid/aether/timeout"
 )
 
 // Option configures an Engine instance.
@@ -29,6 +30,15 @@ func WithExecutor(plugin executor.Plugin) Option {
 			e.executorReg = executor.NewRegistry()
 		}
 		_ = e.executorReg.Register(plugin)
+	}
+}
+
+// WithExecutorRegistry sets a pre-built executor registry.
+// Use this when you already have an *executor.Registry (e.g. shared with a broker)
+// and want to avoid registering each plugin twice.
+func WithExecutorRegistry(reg *executor.Registry) Option {
+	return func(e *Engine) {
+		e.executorReg = reg
 	}
 }
 
@@ -73,5 +83,14 @@ func WithSecretStore(s secret.Store) Option {
 func WithHookNotifier(h hook.Notifier) Option {
 	return func(e *Engine) {
 		e.hookNotifier = h
+	}
+}
+
+// WithTimeoutWatcher sets the timeout watchdog (optional).
+// When configured, Engine.Start() will begin the watchdog loop that detects
+// tasks and workflows that have exceeded their deadlines.
+func WithTimeoutWatcher(w timeout.Watcher) Option {
+	return func(e *Engine) {
+		e.timeoutWatcher = w
 	}
 }

@@ -1,0 +1,28 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 4,
+  "expectTasks": [
+    {
+      "taskName": "fetch",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "count", "value": 2}
+      ]
+    },
+    {
+      "taskName": "transform",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "summary", "value": "processed 2 records"},
+        {"name": "ok",      "value": true}
+      ]
+    },
+    {
+      "taskName": "notify",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "sent", "value": true}
+      ]
+    }
+  ]
+}

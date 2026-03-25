@@ -278,7 +278,7 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 		}
 		if tr.Outputs != nil {
 			env[prefix+".code"] = tr.Outputs.Code
-			env[prefix+".msg"] = tr.Outputs.Msg
+			env[prefix+".msg"] = tr.Outputs.Message
 			for _, p := range tr.Outputs.Parameters {
 				var val any
 				if err := json.Unmarshal(p.Value, &val); err == nil {
@@ -323,7 +323,12 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 //   - Parent is a Loop: iterations are dispatched directly without a DAG task node.
 //
 // When taskCall is nil, only definition-level defaults (timeout, inputs, resources) apply.
-func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, taskDecl *model.Task, taskCall *model.Task, wf *model.Workflow) (*broker.TaskAssignment, error) {
+// BuildTaskAssignment assembles a TaskAssignment skeleton (executor, timeout, resources).
+//
+// Inputs are intentionally excluded: callers must resolve and set assignment.Inputs
+// separately via binding.Binder.Bind() to ensure valueFrom and template variables are
+// expanded before the assignment is dispatched to the broker.
+func BuildTaskAssignment(workflowRunID string, tr *store.TaskRun, taskDecl *model.Task, taskCall *model.Task, wf *model.Workflow) (*broker.TaskAssignment, error) {
 	if taskDecl == nil {
 		return nil, fmt.Errorf("no task definition for task %q: cannot build assignment", tr.TaskName)
 	}
@@ -349,69 +354,10 @@ func BuildTaskAssignment(workflowRunID uint64, tr *store.TaskRun, taskDecl *mode
 	}
 	assignment.Timeout = timeout
 
-	// Inputs: start with definition inputs, merge callSite arguments on top
-	inputs := resolveInputs(taskDecl.Inputs, taskCall)
-	if inputs != nil {
-		inputsJSON, _ := json.Marshal(inputs)
-		assignment.Inputs = inputsJSON
-	}
-
-	if res := taskDecl.Resources; res != nil {
-		resourcesJSON, _ := json.Marshal(res)
-		assignment.Resources = resourcesJSON
-	}
+	// Resources: from definition only
+	assignment.Resources = taskDecl.Resources
 
 	return assignment, nil
-}
-
-// resolveInputs merges template inputs with task arguments.
-// Task arguments override template input defaults.
-func resolveInputs(templateInputs *model.Inputs, task *model.Task) *model.Inputs {
-	if templateInputs == nil && (task == nil || task.Arguments == nil) {
-		return nil
-	}
-
-	result := &model.Inputs{}
-
-	// Start with template inputs
-	if templateInputs != nil {
-		result.Parameters = append(result.Parameters, templateInputs.Parameters...)
-		result.Artifacts = append(result.Artifacts, templateInputs.Artifacts...)
-	}
-
-	// Override with task arguments
-	if task != nil && task.Arguments != nil {
-		// Override parameters by name
-		for _, arg := range task.Arguments.Parameters {
-			found := false
-			for i := range result.Parameters {
-				if result.Parameters[i].Name == arg.Name {
-					result.Parameters[i].Value = arg.Value
-					found = true
-					break
-				}
-			}
-			if !found {
-				result.Parameters = append(result.Parameters, arg)
-			}
-		}
-		// Override artifacts by name
-		for _, arg := range task.Arguments.Artifacts {
-			found := false
-			for i := range result.Artifacts {
-				if result.Artifacts[i].Name == arg.Name {
-					result.Artifacts[i] = arg
-					found = true
-					break
-				}
-			}
-			if !found {
-				result.Artifacts = append(result.Artifacts, arg)
-			}
-		}
-	}
-
-	return result
 }
 
 // FindTask finds a task by name within a DAG.

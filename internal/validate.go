@@ -47,16 +47,14 @@ func Validate(wf *model.Workflow) error {
 		return err
 	}
 
-	if wf.Spec.WorkflowTemplateRef == nil {
-		if wf.Spec.Entrypoint == "" {
-			return fmt.Errorf("spec.entrypoint is required when templates are inline")
-		}
-		if len(wf.Spec.Templates) == 0 {
-			return fmt.Errorf("spec.templates is required when workflowTemplateRef is not set")
-		}
-		if FindTemplate(wf, wf.Spec.Entrypoint) == nil {
-			return fmt.Errorf("entrypoint template %q not found in templates", wf.Spec.Entrypoint)
-		}
+	if wf.Spec.Entrypoint == "" {
+		return fmt.Errorf("spec.entrypoint is required")
+	}
+	if len(wf.Spec.Templates) == 0 {
+		return fmt.Errorf("spec.templates is required")
+	}
+	if FindTemplate(wf, wf.Spec.Entrypoint) == nil {
+		return fmt.Errorf("entrypoint template %q not found in templates", wf.Spec.Entrypoint)
 	}
 
 	for i := range wf.Spec.Templates {
@@ -113,10 +111,8 @@ func Validate(wf *model.Workflow) error {
 	}
 
 	// Static nesting depth check from entrypoint
-	if wf.Spec.WorkflowTemplateRef == nil {
-		if err := validateNestingDepth(wf, wf.Spec.Entrypoint, 0); err != nil {
-			return err
-		}
+	if err := validateNestingDepth(wf, wf.Spec.Entrypoint, 0); err != nil {
+		return err
 	}
 
 	return nil

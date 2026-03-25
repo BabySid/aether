@@ -1,0 +1,57 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "single-task-all-types",
+        "annotations": {
+            "description": "single task with echo executor covering all 5 output types (string/int/bool/array/object)",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-phase": "greet=Succeeded"
+        }
+    },
+    "spec": {
+        "entrypoint": "greet",
+        "arguments": {
+            "parameters": [
+                {"name": "username", "type": "string", "value": "Alice"}
+            ]
+        },
+        "templates": [
+            {
+                "task": {
+                    "name": "greet",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "username",
+                                "type": "string",
+                                "valueFrom": {"parameter": "workflow.arguments.parameters.username"}
+                            }
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "message", "type": "string", "value": "Hello, Alice!"},
+                                {"name": "code",    "type": "int",    "value": 200},
+                                {"name": "ok",      "type": "bool",   "value": true},
+                                {"name": "tags",    "type": "array",  "value": ["greet", "demo"]},
+                                {"name": "meta",    "type": "object", "value": {"version": "1.0", "env": "test"}}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "message", "type": "string"},
+                            {"name": "code",    "type": "int"},
+                            {"name": "ok",      "type": "bool"},
+                            {"name": "tags",    "type": "array"},
+                            {"name": "meta",    "type": "object"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

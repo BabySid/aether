@@ -1,0 +1,14 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 4,
+  "expectTasks": [
+    {
+      "taskName": "process-file",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "status", "value": "done"},
+        {"name": "rows",   "value": 100}
+      ]
+    }
+  ]
+}

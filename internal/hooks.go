@@ -17,7 +17,7 @@ func NotifyHook(ctx context.Context, notifier hook.Notifier, event *hook.Event) 
 }
 
 // FireWorkflowHooks fires the appropriate workflow-level hook based on the phase.
-func FireWorkflowHooks(ctx context.Context, notifier hook.Notifier, wf *model.Workflow, workflowRunID uint64, phase model.Phase) {
+func FireWorkflowHooks(ctx context.Context, notifier hook.Notifier, wf *model.Workflow, workflowRunID string, phase model.Phase) {
 	if notifier == nil || wf.Spec.Hooks == nil {
 		return
 	}
@@ -81,7 +81,7 @@ func FireWorkflowHooks(ctx context.Context, notifier hook.Notifier, wf *model.Wo
 }
 
 // FireTaskHooks fires the appropriate task-level hook based on the phase.
-func FireTaskHooks(ctx context.Context, notifier hook.Notifier, task *model.Task, workflowRunID uint64, phase model.Phase) {
+func FireTaskHooks(ctx context.Context, notifier hook.Notifier, task *model.Task, workflowRunID string, phase model.Phase) {
 	if notifier == nil || task == nil || task.Hooks == nil {
 		return
 	}

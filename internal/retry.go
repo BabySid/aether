@@ -63,7 +63,10 @@ func ResolveRetryPolicy(wf *model.Workflow, parentTemplateName, taskName string)
 }
 
 // ShouldRetry returns true if the task should be retried based on its retry
-// policy and the result of the last execution attempt.
+// policy and the phase of the last execution attempt.
+//
+// phase is the computed result phase (may differ from tr.Status which is still
+// Running at the time of the call — the engine computes phase before persisting it).
 //
 // Default behaviour (no Expression):
 //   - Succeeded / Skipped / Failed → no retry
@@ -73,13 +76,13 @@ func ResolveRetryPolicy(wf *model.Workflow, parentTemplateName, taskName string)
 // has full control over whether to retry. eval may be nil; in that case a
 // non-empty Expression is treated as "always retry" (graceful degradation,
 // consistent with EvalWhenCondition behaviour).
-func ShouldRetry(ctx context.Context, tr *store.TaskRun, retry *model.Retry, eval expr.Evaluator) (bool, error) {
+func ShouldRetry(ctx context.Context, tr *store.TaskRun, phase model.Phase, retry *model.Retry, eval expr.Evaluator) (bool, error) {
 	if retry == nil || retry.Limit <= 0 {
 		return false, nil
 	}
 
 	// Succeeded and Skipped are not failure phases — no retry needed.
-	if tr.Status == nil || *tr.Status == model.PhaseSucceeded || *tr.Status == model.PhaseSkipped {
+	if phase == model.PhaseSucceeded || phase == model.PhaseSkipped {
 		return false, nil
 	}
 
@@ -94,16 +97,19 @@ func ShouldRetry(ctx context.Context, tr *store.TaskRun, retry *model.Retry, eva
 	// same result, so we exclude it from default retry.
 	// Only Error (system error) and Timeout are retried by default.
 	if retry.Expression == "" {
-		return *tr.Status == model.PhaseError || *tr.Status == model.PhaseTimeout, nil
+		return phase == model.PhaseError || phase == model.PhaseTimeout, nil
 	}
 
 	// Custom expression: evaluate against the task's own execution result.
+	// Build a synthetic TaskRun with the computed phase for expression evaluation.
 	// If no evaluator is configured, fall back to unconditional retry.
 	if eval == nil {
 		return true, nil
 	}
 
-	env := BuildTaskEnv([]*store.TaskRun{tr})
+	candidate := *tr
+	candidate.Status = &phase
+	env := BuildTaskEnv([]*store.TaskRun{&candidate})
 	result, err := eval.Eval(ctx, retry.Expression, env)
 	if err != nil {
 		return false, fmt.Errorf("retry expression %q: %w", retry.Expression, err)

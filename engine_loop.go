@@ -6,9 +6,53 @@ import (
 	"fmt"
 
 	"github.com/BabySid/aether/internal"
+	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
+
+// resolveLoopInputs binds the call-site arguments to the loop template's declared inputs.
+//
+// Returns the resolved *model.Inputs that startLoopController uses to build the EvalEnv
+// via binding.WithResolvedInputs(...), making expressions like
+// itemsFrom: "{{inputs.parameters.content-list}}" resolvable.
+//
+// Note: Inputs is immutable in the store (set at creation), so resolved inputs are passed
+// in-memory rather than persisted.
+func (e *Engine) resolveLoopInputs(ctx context.Context, workflowRunID string, wf *model.Workflow, loopTR *store.TaskRun) (*model.Inputs, error) {
+	loopTmpl := internal.FindTemplate(wf, loopTR.TemplateName)
+	if loopTmpl == nil || loopTmpl.Loop == nil {
+		return nil, nil
+	}
+
+	// Find call-site Arguments from the parent DAG task node (if any).
+	var callSiteArgs *model.Arguments
+	if loopTR.ParentRunID != "" {
+		parentTR, err := e.store.GetTaskRun(ctx, loopTR.ParentRunID)
+		if err != nil {
+			return nil, fmt.Errorf("get parent for loop %q: %w", loopTR.TaskName, err)
+		}
+		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+		if parentTmpl != nil && parentTmpl.DAG != nil {
+			if dagTask := internal.FindTask(parentTmpl.DAG, loopTR.TaskName); dagTask != nil {
+				callSiteArgs = dagTask.Arguments
+			}
+		}
+	}
+
+	// Build EvalEnv: workflow-level args + sibling outputs.
+	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, loopTR.ParentRunID)
+	if err != nil {
+		return nil, fmt.Errorf("list siblings for loop input binding %q: %w", loopTR.TaskName, err)
+	}
+	env := binding.NewEnvBuilder().
+		WithWorkflowArgs(wf.Spec.Arguments).
+		WithSiblingTaskRuns(siblingRuns).
+		Build()
+
+	binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
+	return binder.Bind(ctx, loopTmpl.Loop.Inputs, callSiteArgs, env)
+}
 
 // startLoopController initialises a Loop container and creates the first batch of
 // iteration TaskRuns.
@@ -39,7 +83,13 @@ import (
 // in TaskRun.Inputs and forwarded to the broker without further expression resolution.
 //
 // Zero-iteration loops are finalized as Succeeded immediately without entering advanceScope.
-func (e *Engine) startLoopController(ctx context.Context, workflowRunID uint64, wf *model.Workflow, loopTR *store.TaskRun) error {
+// startLoopController initialises a Loop container and creates the first batch of
+// iteration TaskRuns.
+//
+// resolvedInputs is the result of resolveLoopInputs: call-site arguments merged with
+// the loop template's declared inputs. It is passed in-memory (not persisted) because
+// TaskRun.Inputs is immutable after creation.
+func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, wf *model.Workflow, loopTR *store.TaskRun, resolvedInputs *model.Inputs) error {
 	// 1. Resolve loop and body templates.
 	loopTmpl := internal.FindTemplate(wf, loopTR.TemplateName)
 	if loopTmpl == nil || loopTmpl.Loop == nil {
@@ -60,12 +110,18 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID uint64, 
 		return e.spawnRepeatIteration(ctx, workflowRunID, wf, loopTR, 0)
 	}
 
-	// 2. Expand iterations; use sibling task outputs as the expression environment.
+	// 2. Expand iterations.
+	// Build EvalEnv from workflow args + sibling task outputs + loop's resolved inputs
+	// so that itemsFrom expressions like "{{inputs.parameters.content-list}}" resolve correctly.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, loopTR.ParentRunID)
 	if err != nil {
 		return fmt.Errorf("list siblings for loop %q: %w", loopTR.TemplateName, err)
 	}
-	env := internal.BuildTaskEnv(siblingRuns)
+	env := binding.NewEnvBuilder().
+		WithWorkflowArgs(wf.Spec.Arguments).
+		WithResolvedInputs(resolvedInputs).
+		WithSiblingTaskRuns(siblingRuns).
+		Build()
 	iterations, err := internal.ExpandLoopIterations(ctx, loop, e.exprEvaluator, env)
 	if err != nil {
 		// Expansion failed (e.g. expression error). Mark the loop as Error so the
@@ -139,7 +195,7 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID uint64, 
 //
 // All iteration TaskRuns share the same ParentRunID (loopTR.RunID), so ListTaskRunsByParent
 // returns them all as siblings. iterIndex is encoded in the Scope field for traceability.
-func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID uint64, wf *model.Workflow, loopTR *store.TaskRun, iterIndex int) error {
+func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID string, wf *model.Workflow, loopTR *store.TaskRun, iterIndex int) error {
 	loopTmpl := internal.FindTemplate(wf, loopTR.TemplateName)
 	if loopTmpl == nil || loopTmpl.Loop == nil {
 		return fmt.Errorf("loop template %q not found", loopTR.TemplateName)
@@ -198,7 +254,7 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID uint64,
 //	(true,  nil) — new iteration spawned; scope is still in progress.
 //	(false, nil) — not a repeatCondition loop, loop is done, or maxIterations reached.
 //	(false, err) — condition evaluation or iteration creation failed.
-func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID uint64, wf *model.Workflow, parentTR *store.TaskRun, children []*store.TaskRun) (bool, error) {
+func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID string, wf *model.Workflow, parentTR *store.TaskRun, children []*store.TaskRun) (bool, error) {
 	if parentTR.TemplateType != model.TemplateTypeLoop {
 		return false, nil
 	}
@@ -253,7 +309,7 @@ func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID uint64,
 // re-running expression resolution.
 //
 // The Scope field is set to "<loopTaskName>.loop[<iterIndex>]/" for traceability.
-func (e *Engine) createIterationRun(ctx context.Context, workflowRunID uint64, loopTR *store.TaskRun, bodyName, bodyTemplateType string, iterIndex int, iterParams map[string]any) error {
+func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, loopTR *store.TaskRun, bodyName, bodyTemplateType string, iterIndex int, iterParams map[string]any) error {
 	iterScope := fmt.Sprintf("%s.loop[%d]/", loopTR.TaskName, iterIndex)
 
 	var iterInputs *model.Inputs
@@ -314,7 +370,7 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID uint64, l
 //	(true,  nil) — at least one new iteration was spawned.
 //	(false, nil) — not a concurrency-limited items/itemsFrom loop, or all iterations created.
 //	(false, err) — expansion or iteration creation failed.
-func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID uint64, wf *model.Workflow, parentTR *store.TaskRun, children []*store.TaskRun) (bool, error) {
+func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID string, wf *model.Workflow, parentTR *store.TaskRun, children []*store.TaskRun) (bool, error) {
 	if parentTR.TemplateType != model.TemplateTypeLoop {
 		return false, nil
 	}
@@ -330,11 +386,16 @@ func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID uint6
 	}
 
 	// Re-expand iterations to know the total count and each item's params.
+	// Use the same EvalEnv approach: workflow args + loop resolved inputs + sibling outputs.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, parentTR.ParentRunID)
 	if err != nil {
 		return false, fmt.Errorf("list siblings for loop %q concurrency advance: %w", parentTR.TemplateName, err)
 	}
-	env := internal.BuildTaskEnv(siblingRuns)
+	env := binding.NewEnvBuilder().
+		WithWorkflowArgs(wf.Spec.Arguments).
+		WithResolvedInputs(parentTR.Inputs).
+		WithSiblingTaskRuns(siblingRuns).
+		Build()
 	iterations, err := internal.ExpandLoopIterations(ctx, loop, e.exprEvaluator, env)
 	if err != nil {
 		return false, fmt.Errorf("expand loop %q for concurrency advance: %w", parentTR.TemplateName, err)

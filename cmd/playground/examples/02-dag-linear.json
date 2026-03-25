@@ -1,0 +1,128 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-linear-param-passing",
+        "annotations": {
+            "description": "DAG linear chain A->B->C with parameter passing between tasks",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-count": "4",
+            "test:expect-task-phase": "main=Succeeded,fetch=Succeeded,transform=Succeeded,notify=Succeeded"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "fetch",
+                            "template": "fetch-data"
+                        },
+                        {
+                            "name": "transform",
+                            "template": "transform-data",
+                            "dependencies": ["fetch"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "raw",
+                                        "valueFrom": {"parameter": "tasks.fetch.outputs.parameters.body"}
+                                    },
+                                    {
+                                        "name": "count",
+                                        "valueFrom": {"parameter": "tasks.fetch.outputs.parameters.count"}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "notify",
+                            "template": "send-notify",
+                            "dependencies": ["transform"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "summary",
+                                        "valueFrom": {"parameter": "tasks.transform.outputs.parameters.summary"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "fetch-data",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "body",  "type": "array",  "value": [{"id": 1}, {"id": 2}]},
+                                {"name": "count", "type": "int",    "value": 2}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "body",  "type": "array"},
+                            {"name": "count", "type": "int"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "transform-data",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "raw",   "type": "array"},
+                            {"name": "count", "type": "int"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "summary", "type": "string", "value": "processed 2 records"},
+                                {"name": "ok",      "type": "bool",   "value": true}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "summary", "type": "string"},
+                            {"name": "ok",      "type": "bool"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "send-notify",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "summary", "type": "string"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "sent", "type": "bool", "value": true}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "sent", "type": "bool"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

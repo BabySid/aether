@@ -1,0 +1,13 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "flaky",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "status",  "value": "ok"},
+        {"name": "attempt", "value": 1}
+      ]
+    }
+  ]
+}

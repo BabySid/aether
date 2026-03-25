@@ -29,7 +29,7 @@ type TaskBroker interface {
 
 	// Cancel sends a cancellation signal to a running task.
 	// Implementation decides how to propagate (context cancel / remote signal).
-	Cancel(ctx context.Context, taskRunID uint64) error
+	Cancel(ctx context.Context, taskRunID string) error
 
 	// --- Worker side ---
 
@@ -45,11 +45,11 @@ type TaskBroker interface {
 	// The implementation decides how to deliver this event to the engine:
 	//   - local: directly invokes the StartHandler
 	//   - distributed: publishes to MQ, the consumer calls engine.OnTaskStarted
-	StartTask(ctx context.Context, taskRunID uint64, workerID string) error
+	StartTask(ctx context.Context, taskRunID string, workerID string) error
 
 	// Heartbeat reports that a worker is still alive and working on the task.
 	// Implementations should treat this as idempotent.
-	Heartbeat(ctx context.Context, taskRunID uint64, workerID string) error
+	Heartbeat(ctx context.Context, taskRunID string, workerID string) error
 
 	// CompleteTask reports the final execution result of a task.
 	// Called by the worker after task execution finishes.
@@ -70,7 +70,7 @@ type TaskBroker interface {
 // This type is NOT part of the TaskBroker interface contract.
 // It is a convenience type used by implementations (e.g., local broker)
 // that need a direct callback mechanism.
-type StartHandler func(ctx context.Context, taskRunID uint64)
+type StartHandler func(ctx context.Context, taskRunID string)
 
 // CompletionHandler is the callback invoked when a task finishes execution.
 // Engine's OnTaskCompleted method satisfies this signature.
@@ -82,23 +82,38 @@ type CompletionHandler func(ctx context.Context, result *TaskResult)
 
 // TaskAssignment contains all information needed to execute a task.
 // "Fat assignment": workers do not need to query the Store.
+//
+// ExecutorConfig is kept as json.RawMessage because each executor type has its
+// own config schema; the broker/engine layer does not parse it.
+// Inputs and Resources use strong types: they follow a fixed schema known to the
+// framework, and using *model.Inputs / *model.Resources eliminates manual
+// marshal/unmarshal in every broker implementation.
 type TaskAssignment struct {
-	TaskRunID      uint64
-	WorkflowRunID  uint64
+	TaskRunID      string
+	WorkflowRunID  string
 	TaskName       string
 	TemplateName   string
-	ExecutorType   string          // "script" / "function" / "await"
-	ExecutorConfig json.RawMessage // executor.config raw JSON
-	Inputs         json.RawMessage // task inputs raw JSON
-	Timeout        string          // e.g. "30m"
-	Resources      json.RawMessage // resource requirements
+	ExecutorType   string           // "script" / "function" / "await"
+	ExecutorConfig json.RawMessage  // executor-specific config, opaque to broker/engine
+	Inputs         *model.Inputs    // resolved task inputs (nil if none)
+	Timeout        string           // e.g. "30m"
+	Resources      *model.Resources // resource requirements (nil if none)
 	Priority       int
 }
 
 // TaskResult holds the result of a completed task execution.
+// It is the message a worker sends to the engine when a task finishes.
+//
+// Design principles:
+//   - WorkflowRunID mirrors TaskAssignment so the engine can locate the scope
+//     without an extra store lookup.
+//   - ExecOutputs.Code carries the execution outcome; the engine maps it to
+//     Phase (single Phase writer).
+//   - Phase and Metrics are NOT included: Phase is derived by the engine from
+//     Code; Metrics (StartedAt/FinishedAt/Retries) are recorded by the engine
+//     in OnTaskStarted / OnTaskCompleted.
 type TaskResult struct {
-	TaskRunID uint64
-	Phase     model.Phase
-	Message   string
-	Outputs   *model.Outputs
+	TaskRunID     string
+	WorkflowRunID string // mirrors TaskAssignment.WorkflowRunID; avoids extra store lookup
+	*model.ExecOutputs
 }

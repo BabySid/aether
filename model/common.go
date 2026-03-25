@@ -1,5 +1,38 @@
 package model
 
+// ExecCode is the standard return code for ExecOutputs.Code.
+// Executor implementations MUST use these constants; the engine layer
+// derives Phase from Code (single Phase writer).
+//
+// Code-to-Phase mapping (performed by the engine in OnTaskCompleted):
+//
+//	ExecCodeSucceeded → PhaseSucceeded
+//	ExecCodeSuspended → PhaseRunning   (await pattern)
+//	ExecCodeFailed    → PhaseFailed    (business failure)
+//	ExecCodeError     → PhaseError     (system/framework-level error)
+//	ExecCodeTimeout   → PhaseTimeout   (task exceeded its deadline)
+//
+// PhaseSkipped and PhaseCancelled are set exclusively by the engine itself
+// and never appear in ExecOutputs.
+const (
+	// ExecCodeSucceeded indicates the task completed successfully.
+	ExecCodeSucceeded = 0
+	// ExecCodeSuspended indicates the task is suspended, waiting for an external
+	// Resume() call (await pattern). The engine converts this to PhaseRunning.
+	ExecCodeSuspended = 1
+	// ExecCodeFailed indicates the task completed with a business failure.
+	// The engine converts this to PhaseFailed.
+	ExecCodeFailed = 2
+	// ExecCodeError indicates a system-level error (e.g. executor panic, OOM,
+	// container killed, network failure). The engine converts this to PhaseError.
+	ExecCodeError = 3
+	// ExecCodeTimeout indicates the task exceeded its deadline.
+	// In local mode the broker sets this when the task context times out;
+	// in distributed mode the engine's watchdog may set it directly without
+	// receiving a TaskResult.
+	ExecCodeTimeout = 4
+)
+
 // Arguments represents the arguments passed to a task or workflow.
 type Arguments struct {
 	Parameters []Parameter `json:"parameters,omitempty"`
@@ -12,15 +45,26 @@ type Inputs struct {
 	Artifacts  []Artifact  `json:"artifacts,omitempty"`
 }
 
-// Outputs defines the outputs of a workflow or task execution.
-type Outputs struct {
-	Phase      Phase       `json:"phase,omitempty"`
+// ExecOutputs is the business data produced by an executor.
+// It is the single authoritative structure for executor return values,
+// shared across executor.Plugin, broker.TaskResult, and model.Outputs.
+// Phase and Metrics are NOT included here; they are framework concerns filled
+// by the broker/engine layer, not by the executor itself.
+type ExecOutputs struct {
 	Code       int         `json:"code,omitempty"`
-	Msg        string      `json:"msg,omitempty"`
-	Metrics    *Metrics    `json:"metrics,omitempty"`
-	Progress   string      `json:"progress,omitempty"`
+	Message    string      `json:"message,omitempty"`
 	Parameters []Parameter `json:"parameters,omitempty"`
 	Artifacts  []Artifact  `json:"artifacts,omitempty"`
+}
+
+// Outputs defines the complete output of a workflow or task execution.
+// Phase and Metrics are filled by the framework (broker/engine).
+// ExecOutputs (Code, Message, Parameters, Artifacts) originate from the executor.
+// The embedded fields are JSON-flat (no wrapper key).
+type Outputs struct {
+	Phase   Phase    `json:"phase,omitempty"`
+	Metrics *Metrics `json:"metrics,omitempty"`
+	ExecOutputs
 }
 
 // Metrics holds execution timing and retry information.

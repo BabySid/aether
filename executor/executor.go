@@ -15,23 +15,36 @@ type Plugin interface {
 	Type() string
 
 	// Execute runs the task, blocking until completion or ctx cancellation.
-	Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResult, error)
+	// The returned *model.ExecOutputs carries the business data (Code, Message,
+	// Parameters, Artifacts). Phase is NOT set by the executor; the broker/engine
+	// layer is the single writer of Phase, derived from (error, ctx.Err(), Code):
+	//   ctx.Err() != nil         → PhaseTimeout
+	//   error != nil             → PhaseError
+	//   Code == ExecCodeSuspended → PhaseRunning  (await pattern)
+	//   Code == ExecCodeFailed    → PhaseFailed
+	//   Code == ExecCodeSucceeded → PhaseSucceeded
+	Execute(ctx context.Context, req *ExecuteRequest) (*model.ExecOutputs, error)
 }
 
 // ExecuteRequest is the input to a Plugin.
+// It carries all information a plugin needs to execute the task and emit
+// structured logs. Timeout is forwarded from TaskAssignment so the plugin
+// can respect the deadline independently of the context (e.g. pass it to
+// a subprocess or a remote API call).
 type ExecuteRequest struct {
-	TaskRunID uint64
-	Config    json.RawMessage
+	// Identifiers — useful for structured logging and distributed tracing.
+	TaskRunID     string
+	WorkflowRunID string
+	TaskName      string
+	TemplateName  string
+
+	// Execution configuration — opaque to the framework, parsed by the plugin.
+	Config json.RawMessage
+
+	// Runtime inputs and constraints.
 	Inputs    *model.Inputs
 	Resources *model.Resources
-}
-
-// ExecuteResult is the output from a Plugin.
-type ExecuteResult struct {
-	Phase   model.Phase
-	Code    int
-	Msg     string
-	Outputs *model.Outputs
+	Timeout   string // e.g. "30m"; empty means no deadline beyond ctx
 }
 
 // Registry manages registered executor plugins, routing by Type().

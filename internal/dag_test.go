@@ -6,12 +6,30 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
 
 // phasePtr is a test helper to take the address of a Phase value.
 func phasePtr(p model.Phase) *model.Phase { return &p }
+
+// rawJSON marshals any value into a json.RawMessage.
+func rawJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// mockEvaluator is a test double for expr.Evaluator.
+type mockEvaluator struct {
+	fn func(expr string, env map[string]any) (any, error)
+}
+
+func (m *mockEvaluator) Eval(_ context.Context, expression string, env map[string]any) (any, error) {
+	return m.fn(expression, env)
+}
+
+var _ expr.Evaluator = (*mockEvaluator)(nil)
 
 // ---- HasCycle ----
 
@@ -494,10 +512,10 @@ func TestBuildTaskEnv_OutputParameters(t *testing.T) {
 			TaskName: "step-a",
 			Status:   phasePtr(model.PhaseSucceeded),
 			Outputs: &model.Outputs{
-				Code: 0,
-				Msg:  "ok",
-				Parameters: []model.Parameter{
-					{Name: "score", Value: rawJSON(95)},
+				ExecOutputs: model.ExecOutputs{
+					Code:       0,
+					Message:    "ok",
+					Parameters: []model.Parameter{{Name: "score", Value: rawJSON(95)}},
 				},
 			},
 		},
@@ -541,30 +559,30 @@ func makeWorkflow(priority int) *model.Workflow {
 func minExec() *model.Executor { return &model.Executor{Type: "script"} }
 
 func TestBuildTaskAssignment_NoExecutorReturnsError(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{Name: "t"} // no executor
 	wf := makeWorkflow(0)
 
-	_, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
+	_, err := BuildTaskAssignment("1", tr, taskDecl, nil, wf)
 	if err == nil {
 		t.Error("expected error when task definition has no executor")
 	}
 }
 
 func TestBuildTaskAssignment_Basic(t *testing.T) {
-	tr := &store.TaskRun{RunID: 10, TaskName: "my-task", TemplateName: "my-tmpl"}
+	tr := &store.TaskRun{RunID: "10", TaskName: "my-task", TemplateName: "my-tmpl"}
 	taskDecl := &model.Task{Name: "my-tmpl", Executor: minExec()}
 	wf := makeWorkflow(5)
 
-	a, err := BuildTaskAssignment(100, tr, taskDecl, nil, wf)
+	a, err := BuildTaskAssignment("100", tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if a.TaskRunID != 10 {
-		t.Errorf("expected TaskRunID=10, got %d", a.TaskRunID)
+	if a.TaskRunID != "10" {
+		t.Errorf("expected TaskRunID=10, got %q", a.TaskRunID)
 	}
-	if a.WorkflowRunID != 100 {
-		t.Errorf("expected WorkflowRunID=100, got %d", a.WorkflowRunID)
+	if a.WorkflowRunID != "100" {
+		t.Errorf("expected WorkflowRunID=100, got %q", a.WorkflowRunID)
 	}
 	if a.TaskName != "my-task" {
 		t.Errorf("expected TaskName=my-task, got %q", a.TaskName)
@@ -575,14 +593,14 @@ func TestBuildTaskAssignment_Basic(t *testing.T) {
 }
 
 func TestBuildTaskAssignment_ExecutorInfo(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{
 		Name:     "t",
 		Executor: &model.Executor{Type: "function", Config: json.RawMessage(`{"fn":"main"}`)},
 	}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
+	a, err := BuildTaskAssignment("1", tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -592,11 +610,11 @@ func TestBuildTaskAssignment_ExecutorInfo(t *testing.T) {
 }
 
 func TestBuildTaskAssignment_TimeoutTemplateLevel(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{Name: "t", Timeout: "10m", Executor: minExec()}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
+	a, err := BuildTaskAssignment("1", tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -606,12 +624,12 @@ func TestBuildTaskAssignment_TimeoutTemplateLevel(t *testing.T) {
 }
 
 func TestBuildTaskAssignment_TimeoutTaskOverridesTemplate(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{Name: "t", Timeout: "10m", Executor: minExec()}
 	taskCall := &model.Task{Name: "t", Timeout: "30s"}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, taskDecl, taskCall, wf)
+	a, err := BuildTaskAssignment("1", tr, taskDecl, taskCall, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,11 +639,11 @@ func TestBuildTaskAssignment_TimeoutTaskOverridesTemplate(t *testing.T) {
 }
 
 func TestBuildTaskAssignment_TaskNilDoesNotPanic(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{Name: "t", Timeout: "5m", Executor: minExec()}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
+	a, err := BuildTaskAssignment("1", tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -634,8 +652,11 @@ func TestBuildTaskAssignment_TaskNilDoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestBuildTaskAssignment_InputsMerged(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+// TestBuildTaskAssignment_InputsNotSet verifies that BuildTaskAssignment no longer sets
+// assignment.Inputs. Input binding is now the responsibility of binding.Binder.Bind(),
+// which is called by the engine after BuildTaskAssignment returns.
+func TestBuildTaskAssignment_InputsNotSet(t *testing.T) {
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{
 		Name:     "t",
 		Executor: minExec(),
@@ -650,40 +671,24 @@ func TestBuildTaskAssignment_InputsMerged(t *testing.T) {
 		Name: "t",
 		Arguments: &model.Arguments{
 			Parameters: []model.Parameter{
-				{Name: "env", Value: rawJSON("prod")}, // override
+				{Name: "env", Value: rawJSON("prod")},
 			},
 		},
 	}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, taskDecl, taskCall, wf)
+	a, err := BuildTaskAssignment("1", tr, taskDecl, taskCall, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(a.Inputs) == 0 {
-		t.Fatal("expected inputs to be set")
-	}
-
-	var inputs model.Inputs
-	if err := json.Unmarshal(a.Inputs, &inputs); err != nil {
-		t.Fatalf("failed to unmarshal inputs: %v", err)
-	}
-	paramMap := make(map[string]json.RawMessage)
-	for _, p := range inputs.Parameters {
-		paramMap[p.Name] = p.Value
-	}
-	// "env" should be overridden to "prod"
-	if string(paramMap["env"]) != `"prod"` {
-		t.Errorf("expected env=prod, got %q", paramMap["env"])
-	}
-	// "region" keeps default (nil value from merge)
-	if _, ok := paramMap["region"]; !ok {
-		t.Error("expected region key to be present")
+	// BuildTaskAssignment no longer resolves inputs; Inputs must be nil.
+	if a.Inputs != nil {
+		t.Errorf("expected Inputs to be nil (binding is done by binding.Binder), got %+v", a.Inputs)
 	}
 }
 
 func TestBuildTaskAssignment_Resources(t *testing.T) {
-	tr := &store.TaskRun{RunID: 1, TaskName: "t"}
+	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{
 		Name:      "t",
 		Executor:  minExec(),
@@ -691,20 +696,15 @@ func TestBuildTaskAssignment_Resources(t *testing.T) {
 	}
 	wf := makeWorkflow(0)
 
-	a, err := BuildTaskAssignment(1, tr, taskDecl, nil, wf)
+	a, err := BuildTaskAssignment("1", tr, taskDecl, nil, wf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(a.Resources) == 0 {
+	if a.Resources == nil {
 		t.Fatal("expected resources to be set")
 	}
-
-	var res model.Resources
-	if err := json.Unmarshal(a.Resources, &res); err != nil {
-		t.Fatalf("unmarshal resources: %v", err)
-	}
-	if res.Memory != "512Mi" {
-		t.Errorf("expected Memory=512Mi, got %q", res.Memory)
+	if a.Resources.Memory != "512Mi" {
+		t.Errorf("expected Memory=512Mi, got %q", a.Resources.Memory)
 	}
 }
 

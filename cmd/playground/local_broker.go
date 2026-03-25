@@ -3,10 +3,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/BabySid/aether/broker"
 	"github.com/BabySid/aether/executor"
@@ -21,7 +19,7 @@ type LocalBroker struct {
 	handler      broker.CompletionHandler
 
 	mu      sync.Mutex
-	cancels map[uint64]context.CancelFunc
+	cancels map[string]context.CancelFunc
 	wg      sync.WaitGroup
 	closed  bool
 }
@@ -32,7 +30,7 @@ func NewLocalBroker(reg *executor.Registry, startHandler broker.StartHandler, ha
 		registry:     reg,
 		startHandler: startHandler,
 		handler:      handler,
-		cancels:      make(map[uint64]context.CancelFunc),
+		cancels:      make(map[string]context.CancelFunc),
 	}
 }
 
@@ -41,9 +39,12 @@ func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssig
 	if !ok {
 		if b.handler != nil {
 			b.handler(ctx, &broker.TaskResult{
-				TaskRunID: assignment.TaskRunID,
-				Phase:     model.PhaseError,
-				Message:   fmt.Sprintf("unknown executor type: %s", assignment.ExecutorType),
+				TaskRunID:     assignment.TaskRunID,
+				WorkflowRunID: assignment.WorkflowRunID,
+				ExecOutputs: &model.ExecOutputs{
+					Code:    model.ExecCodeError,
+					Message: fmt.Sprintf("unknown executor type: %s", assignment.ExecutorType),
+				},
 			})
 		}
 		return nil
@@ -77,64 +78,61 @@ func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssig
 		}()
 
 		req := &executor.ExecuteRequest{
-			TaskRunID: assignment.TaskRunID,
-			Config:    assignment.ExecutorConfig,
-		}
-		if len(assignment.Inputs) > 0 {
-			var inputs model.Inputs
-			if err := json.Unmarshal(assignment.Inputs, &inputs); err == nil {
-				req.Inputs = &inputs
-			}
-		}
-		if len(assignment.Resources) > 0 {
-			var resources model.Resources
-			if err := json.Unmarshal(assignment.Resources, &resources); err == nil {
-				req.Resources = &resources
-			}
+			TaskRunID:     assignment.TaskRunID,
+			WorkflowRunID: assignment.WorkflowRunID,
+			TaskName:      assignment.TaskName,
+			TemplateName:  assignment.TemplateName,
+			Config:        assignment.ExecutorConfig,
+			Inputs:        assignment.Inputs,
+			Resources:     assignment.Resources,
+			Timeout:       assignment.Timeout,
 		}
 
 		if b.startHandler != nil {
 			b.startHandler(ctx, assignment.TaskRunID)
 		}
 
-		result, err := plugin.Execute(taskCtx, req)
+		execOutputs, err := plugin.Execute(taskCtx, req)
 
-		var taskResult broker.TaskResult
-		taskResult.TaskRunID = assignment.TaskRunID
+		// --- ExecCode normalization ---
+		// The executor sets Code for business outcomes (Succeeded/Suspended/Failed).
+		// The broker translates system-level errors (timeout, panic) into ExecCode
+		// so the engine can derive Phase uniformly from Code alone.
+		//
+		//   ctx.Err() != nil → ExecCodeTimeout
+		//   err != nil       → ExecCodeError
+		//   otherwise        → Code already set by executor (0/1/2)
+		taskResult := &broker.TaskResult{
+			TaskRunID:     assignment.TaskRunID,
+			WorkflowRunID: assignment.WorkflowRunID,
+			ExecOutputs:   execOutputs,
+		}
+		if taskResult.ExecOutputs == nil {
+			taskResult.ExecOutputs = &model.ExecOutputs{}
+		}
 
 		if err != nil {
 			if taskCtx.Err() != nil {
-				taskResult.Phase = model.PhaseTimeout
-				taskResult.Message = fmt.Sprintf("task timed out: %v", taskCtx.Err())
+				taskResult.ExecOutputs.Code = model.ExecCodeTimeout
+				taskResult.ExecOutputs.Message = fmt.Sprintf("task timed out: %v", taskCtx.Err())
 			} else {
-				taskResult.Phase = model.PhaseError
-				taskResult.Message = err.Error()
+				taskResult.ExecOutputs.Code = model.ExecCodeError
+				if taskResult.ExecOutputs.Message == "" {
+					taskResult.ExecOutputs.Message = err.Error()
+				}
 			}
-		} else if result != nil {
-			taskResult.Phase = result.Phase
-			taskResult.Message = result.Msg
-			taskResult.Outputs = result.Outputs
-			now := time.Now().UTC().Format(time.RFC3339)
-			if taskResult.Outputs == nil {
-				taskResult.Outputs = &model.Outputs{}
-			}
-			if taskResult.Outputs.Metrics == nil {
-				taskResult.Outputs.Metrics = &model.Metrics{}
-			}
-			taskResult.Outputs.Metrics.FinishedAt = now
-		} else {
-			taskResult.Phase = model.PhaseSucceeded
 		}
+		// No else needed: executor already set Code (ExecCodeSucceeded/Suspended/Failed).
 
 		if b.handler != nil {
-			b.handler(ctx, &taskResult)
+			b.handler(ctx, taskResult)
 		}
 	}()
 
 	return nil
 }
 
-func (b *LocalBroker) Cancel(_ context.Context, taskRunID uint64) error {
+func (b *LocalBroker) Cancel(_ context.Context, taskRunID string) error {
 	b.mu.Lock()
 	cancel, ok := b.cancels[taskRunID]
 	b.mu.Unlock()
@@ -149,9 +147,9 @@ func (b *LocalBroker) FetchTask(ctx context.Context, _ string) (*broker.TaskAssi
 	return nil, ctx.Err()
 }
 
-func (b *LocalBroker) Heartbeat(_ context.Context, _ uint64, _ string) error { return nil }
+func (b *LocalBroker) Heartbeat(_ context.Context, _ string, _ string) error { return nil }
 
-func (b *LocalBroker) StartTask(ctx context.Context, taskRunID uint64, _ string) error {
+func (b *LocalBroker) StartTask(ctx context.Context, taskRunID string, _ string) error {
 	if b.startHandler != nil {
 		b.startHandler(ctx, taskRunID)
 	}

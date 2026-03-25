@@ -33,3 +33,4 @@ go.work.sum
 # .vscode/
 specs/todo.md
 specs/design-spec.md
+playground

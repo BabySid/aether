@@ -1,0 +1,55 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-retry",
+        "annotations": {
+            "description": "Task-level retry: flaky-task has retry.limit=2; first attempt succeeds (echo never fails; validates retry config is parsed)",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-phase": "main=Succeeded,flaky=Succeeded"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "flaky",
+                            "template": "flaky-task"
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "flaky-task",
+                    "retry": {
+                        "limit": 2,
+                        "backoff": {
+                            "duration": "100ms",
+                            "factor": 2
+                        }
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "status",  "type": "string", "value": "ok"},
+                                {"name": "attempt", "type": "int",    "value": 1}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "status",  "type": "string"},
+                            {"name": "attempt", "type": "int"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

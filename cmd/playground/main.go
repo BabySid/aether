@@ -1,13 +1,14 @@
-// Command playground executes a workflow JSON file locally and produces an HTML report.
+// Command playground executes a workflow JSON file locally.
 //
 // Usage:
 //
-//	playground -workflow path/to/workflow.json [-out report.html] [-timeout 60]
+//	playground -workflow path/to/workflow.json [-out report.html] [-result result.json] [-timeout 60]
 //
 // Flags:
 //
 //	-workflow   Path to the workflow JSON file (required).
-//	-out        Output HTML report path (default: aether-report.html).
+//	-out        Output HTML report path (optional; omit or set "" to skip HTML generation).
+//	-result     Output machine-readable JSON result path (optional).
 //	-timeout    Maximum seconds to wait for the workflow to finish (default: 60).
 package main
 
@@ -28,7 +29,8 @@ import (
 
 func main() {
 	wfPath := flag.String("workflow", "", "Path to workflow JSON file (required)")
-	outPath := flag.String("out", "aether-report.html", "Output HTML report path")
+	outPath := flag.String("out", "", "Output HTML report path (optional; empty = skip)")
+	resultPath := flag.String("result", "", "Output machine-readable JSON result path (optional)")
 	timeoutSec := flag.Int("timeout", 5, "Max seconds to wait for workflow completion")
 	flag.Parse()
 
@@ -49,16 +51,12 @@ func main() {
 	}
 
 	// --- 2. Build executor registry ---
-	// All executor types are mocked with NoopExecutor so that any workflow JSON
-	// can run without real business logic or external dependencies.
+	// "echo" executor uses the built-in EchoExecutor.
 	reg := executor.NewRegistry()
-	_ = reg.Register(newNoop("function"))
-	_ = reg.Register(newNoop("script"))
-	_ = reg.Register(newNoop("await"))
-	_ = reg.Register(newNoop("noop"))
+	_ = reg.Register(newEcho())
 
-	// --- 3. Build store with audit wrapper ---
-	auditStore := NewAuditStore(NewMemoryStore())
+	// --- 3. Build store ---
+	memStore := NewMemoryStore()
 
 	// --- 4. Wire engine + broker ---
 	// The broker needs engine callbacks; the engine needs the broker.
@@ -70,7 +68,7 @@ func main() {
 
 	brok := NewLocalBroker(
 		reg,
-		func(ctx context.Context, taskRunID uint64) {
+		func(ctx context.Context, taskRunID string) {
 			eng.OnTaskStarted(ctx, taskRunID)
 		},
 		func(ctx context.Context, result *broker.TaskResult) {
@@ -83,14 +81,12 @@ func main() {
 	)
 
 	eng, err = aether.New(
-		aether.WithStore(auditStore),
+		aether.WithStore(memStore),
 		aether.WithIDGenerator(NewAtomicIDGen()),
 		aether.WithExprEvaluator(NewSimpleEvaluator()),
 		aether.WithTaskBroker(brok),
-		aether.WithExecutor(newNoop("function")),
-		aether.WithExecutor(newNoop("script")),
-		aether.WithExecutor(newNoop("await")),
-		aether.WithExecutor(newNoop("noop")),
+		aether.WithExecutorRegistry(reg),
+		aether.WithTimeoutWatcher(newPollingWatcher(memStore, 2*time.Second)),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)
@@ -100,12 +96,17 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
 	defer cancel()
 
+	if startErr := eng.Start(ctx); startErr != nil {
+		log.Fatalf("start engine: %v", startErr)
+	}
+	defer eng.Stop()
+
 	startTime := time.Now()
 	runID, err := eng.Submit(ctx, &wf)
 	if err != nil {
 		log.Fatalf("submit workflow: %v", err)
 	}
-	log.Printf("workflow submitted: runID=%d", runID)
+	log.Printf("workflow submitted: runID=%s", runID)
 
 	// --- 6. Wait for workflow to reach terminal state ---
 	var finalExec *aether.WorkflowExecution
@@ -118,13 +119,13 @@ loop:
 		if getErr != nil {
 			log.Fatalf("get workflow: %v", getErr)
 		}
-		if exec.Phase.IsTerminal() {
+		if exec.Phase().IsTerminal() {
 			finalExec = exec
 			break loop
 		}
 		select {
 		case <-ctx.Done():
-			log.Printf("timeout waiting for workflow; last phase: %s", exec.Phase)
+			log.Printf("timeout waiting for workflow; last phase: %s", exec.Phase())
 			finalExec = exec
 			break loop
 		case <-finishCh:
@@ -138,24 +139,38 @@ loop:
 
 	elapsed := time.Since(startTime)
 	log.Printf("workflow finished: phase=%s elapsed=%s progress=%s",
-		finalExec.Phase, elapsed.Round(time.Millisecond), finalExec.Progress)
+		finalExec.Phase(), elapsed.Round(time.Millisecond), finalExec.Progress)
 
 	// --- 7. Collect snapshots ---
-	snapshots := auditStore.Snapshots()
+	snapshots := memStore.Snapshots()
 
-	// --- 8. Generate HTML report ---
-	report := generateHTMLReport(ReportData{
-		WorkflowPath: *wfPath,
-		RunID:        runID,
-		StartTime:    startTime,
-		Elapsed:      elapsed,
-		Execution:    finalExec,
-		Snapshots:    snapshots,
-		RawWorkflow:  raw,
-	})
-
-	if err := os.WriteFile(*outPath, []byte(report), 0o644); err != nil {
-		log.Fatalf("write report: %v", err)
+	// --- 8. Generate HTML report (optional) ---
+	if *outPath != "" {
+		report := generateHTMLReport(ReportData{
+			WorkflowPath: *wfPath,
+			RunID:        runID,
+			StartTime:    startTime,
+			Elapsed:      elapsed,
+			Execution:    finalExec,
+			Snapshots:    snapshots,
+			RawWorkflow:  raw,
+		})
+		if err := os.WriteFile(*outPath, []byte(report), 0o644); err != nil {
+			log.Fatalf("write HTML report: %v", err)
+		}
+		log.Printf("HTML report written to %s", *outPath)
 	}
-	log.Printf("report written to %s", *outPath)
+
+	// --- 9. Write machine-readable JSON result (optional) ---
+	if *resultPath != "" {
+		result := generateResult(*wfPath, runID, startTime, elapsed, finalExec)
+		resultJSON, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			log.Fatalf("marshal result JSON: %v", err)
+		}
+		if err := os.WriteFile(*resultPath, resultJSON, 0o644); err != nil {
+			log.Fatalf("write result JSON: %v", err)
+		}
+		log.Printf("result JSON written to %s", *resultPath)
+	}
 }

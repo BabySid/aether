@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
@@ -117,6 +118,15 @@ func expandItems(items []any, maxIterations int) []map[string]any {
 // Called exclusively by ExpandLoopIterations when loop.ItemsFrom != "".
 // Returns an error if eval is nil, the expression fails, or the result is not an array.
 func expandItemsFrom(ctx context.Context, expression string, eval expr.Evaluator, env map[string]any, maxIterations int) ([]map[string]any, error) {
+	// Fast path: if the expression is a single {{key}} placeholder, resolve it directly
+	// from the env without going through the expression evaluator. This handles the common
+	// case where itemsFrom references a resolved input parameter, e.g.:
+	//   itemsFrom: "{{inputs.parameters.content-list}}"
+	// SimpleEvaluator and other evaluators may not support the {{...}} syntax.
+	if raw, ok := resolveTemplatePlaceholder(expression, env); ok {
+		return toIterationList(raw, expression, maxIterations)
+	}
+
 	if eval == nil {
 		return nil, fmt.Errorf("itemsFrom requires an ExprEvaluator but none is configured")
 	}
@@ -125,17 +135,47 @@ func expandItemsFrom(ctx context.Context, expression string, eval expr.Evaluator
 	if err != nil {
 		return nil, fmt.Errorf("eval itemsFrom %q: %w", expression, err)
 	}
+	return toIterationList(raw, expression, maxIterations)
+}
 
-	// Try to convert the result to a list
+// resolveTemplatePlaceholder checks whether expression is a single {{key}} placeholder
+// and looks up the key directly in env. Returns (value, true) on success.
+// This handles itemsFrom expressions like "{{inputs.parameters.content-list}}" without
+// needing an expression evaluator that understands the {{...}} syntax.
+func resolveTemplatePlaceholder(expression string, env map[string]any) (any, bool) {
+	if len(expression) < 4 {
+		return nil, false
+	}
+	if expression[:2] != "{{" || expression[len(expression)-2:] != "}}" {
+		return nil, false
+	}
+	// Ensure there's no nested {{ inside
+	inner := expression[2 : len(expression)-2]
+	for i := 0; i < len(inner)-1; i++ {
+		if inner[i] == '{' && inner[i+1] == '{' {
+			return nil, false
+		}
+	}
+	key := strings.TrimSpace(inner)
+	val, ok := env[key]
+	return val, ok
+}
+
+// toIterationList converts a raw value (from eval or env lookup) into a list of
+// iteration parameter maps.
+func toIterationList(raw any, expression string, maxIterations int) ([]map[string]any, error) {
 	var items []any
 	switch v := raw.(type) {
 	case []any:
 		items = v
 	case string:
-		// Try parsing as JSON array
 		if err := json.Unmarshal([]byte(v), &items); err != nil {
 			return nil, fmt.Errorf("itemsFrom %q returned non-array string", expression)
 		}
+	case nil:
+		// nil means the source parameter was not set (e.g. noop executor produced no outputs).
+		// Treat as empty list: the loop has zero iterations and completes immediately.
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("itemsFrom %q returned non-array type: %T", expression, raw)
 	}
@@ -234,7 +274,7 @@ func aggregatePickOne(results []LoopIterationResult, idx int, paramFilter map[st
 	if len(params) == 0 {
 		return model.PhaseSucceeded, "", nil
 	}
-	return model.PhaseSucceeded, "", &model.Outputs{Phase: model.PhaseSucceeded, Parameters: params}
+	return model.PhaseSucceeded, "", &model.Outputs{Phase: model.PhaseSucceeded, ExecOutputs: model.ExecOutputs{Parameters: params}}
 }
 
 // aggregateList collects the values of each parameter across all iterations into
@@ -303,7 +343,7 @@ func aggregateList(results []LoopIterationResult, paramFilter map[string]bool) (
 		}
 		params = append(params, model.Parameter{Name: name, Value: arrJSON})
 	}
-	return model.PhaseSucceeded, "", &model.Outputs{Phase: model.PhaseSucceeded, Parameters: params}
+	return model.PhaseSucceeded, "", &model.Outputs{Phase: model.PhaseSucceeded, ExecOutputs: model.ExecOutputs{Parameters: params}}
 }
 
 // filterParams returns only the parameters whose names are in paramFilter.
@@ -368,7 +408,7 @@ func BuildRepeatEnv(iterIndex int, lastRun *store.TaskRun) map[string]any {
 	}
 	if lastRun.Outputs != nil {
 		env[prefix+".code"] = lastRun.Outputs.Code
-		env[prefix+".msg"] = lastRun.Outputs.Msg
+		env[prefix+".msg"] = lastRun.Outputs.Message
 		for _, p := range lastRun.Outputs.Parameters {
 			var val any
 			if err := json.Unmarshal(p.Value, &val); err == nil {

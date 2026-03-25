@@ -1,0 +1,57 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "loop-static-items",
+        "annotations": {
+            "description": "Loop with static items, concurrency=2; each iteration receives filename and returns status+rows",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-count": "5"
+        }
+    },
+    "spec": {
+        "entrypoint": "run-loop",
+        "templates": [
+            {
+                "loop": {
+                    "name": "run-loop",
+                    "items": ["jan.csv", "feb.csv", "mar.csv"],
+                    "concurrency": 2,
+                    "body": "process-file",
+                    "arguments": {
+                        "parameters": [
+                            {"name": "filename", "value": "{{iterator.item}}"},
+                            {"name": "index",    "value": "{{iterator.index}}"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "process-file",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "filename", "type": "string"},
+                            {"name": "index",    "type": "int"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "status", "type": "string", "value": "done"},
+                                {"name": "rows",   "type": "int",    "value": 100}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "status", "type": "string"},
+                            {"name": "rows",   "type": "int"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

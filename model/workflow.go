@@ -10,20 +10,13 @@ type Workflow struct {
 
 // WorkflowSpec defines the specification for a Workflow.
 type WorkflowSpec struct {
-	Entrypoint          string               `json:"entrypoint,omitempty"`
-	Arguments           *Arguments           `json:"arguments,omitempty"`
-	Timeout             string               `json:"timeout,omitempty"`
-	Priority            int                  `json:"priority,omitempty"`
-	MaxNestedDepth      int                  `json:"maxNestedDepth,omitempty"`
-	Templates           []Template           `json:"templates,omitempty"`
-	Hooks               *Hooks               `json:"hooks,omitempty"`
-	WorkflowTemplateRef *WorkflowTemplateRef `json:"workflowTemplateRef,omitempty"`
-}
-
-// WorkflowTemplateRef references an external WorkflowTemplate.
-type WorkflowTemplateRef struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
+	Entrypoint     string     `json:"entrypoint,omitempty"`
+	Arguments      *Arguments `json:"arguments,omitempty"`
+	Timeout        string     `json:"timeout,omitempty"`
+	Priority       int        `json:"priority,omitempty"`
+	MaxNestedDepth int        `json:"maxNestedDepth,omitempty"`
+	Templates      []Template `json:"templates,omitempty"`
+	Hooks          *Hooks     `json:"hooks,omitempty"`
 }
 
 // CronWorkflow is the top-level resource for a scheduled workflow.

@@ -5,16 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"strings"
 	"time"
 
 	aether "github.com/BabySid/aether"
 	"github.com/BabySid/aether/model"
+	"github.com/BabySid/aether/store"
 )
 
 // ReportData is passed to the HTML template.
 type ReportData struct {
 	WorkflowPath string
-	RunID        uint64
+	RunID        string
 	StartTime    time.Time
 	Elapsed      time.Duration
 	Execution    *aether.WorkflowExecution
@@ -66,15 +68,51 @@ func generateHTMLReport(data ReportData) string {
 			return d.Round(time.Millisecond).String()
 		},
 		"add":       func(a, b int) int { return a + b },
-		"taskCount": func(tasks []aether.TaskExecution) int { return len(tasks) },
-		"terminalCount": func(tasks []aether.TaskExecution) int {
+		"taskCount": func(tasks []*store.TaskRun) int { return len(tasks) },
+		"terminalCount": func(tasks []*store.TaskRun) int {
 			n := 0
 			for _, t := range tasks {
-				if t.Phase.IsTerminal() {
+				if t.Status != nil && t.Status.IsTerminal() {
 					n++
 				}
 			}
 			return n
+		},
+		"taskPhase": func(t *store.TaskRun) model.Phase {
+			if t.Status == nil {
+				return ""
+			}
+			return *t.Status
+		},
+		"taskPath": func(t *store.TaskRun) string { return t.Scope + t.TaskName },
+		"taskMsg": func(t *store.TaskRun) string {
+			if t.Message == nil {
+				return ""
+			}
+			return *t.Message
+		},
+		"execPhase": func(e *aether.WorkflowExecution) model.Phase { return e.Phase() },
+		// fmtParams renders a parameter list as "name=value" lines for table cells.
+		// Values longer than 40 chars are truncated; the full value is shown in title on hover.
+		"fmtParams": func(params []model.Parameter) template.HTML {
+			if len(params) == 0 {
+				return template.HTML(`<span style="color:#cbd5e0">—</span>`)
+			}
+			parts := make([]string, 0, len(params))
+			for _, p := range params {
+				full := string(p.Value)
+				disp := full
+				if len(disp) > 40 {
+					disp = disp[:40] + "…"
+				}
+				parts = append(parts, fmt.Sprintf(
+					`<span title="%s"><b>%s</b>=%s</span>`,
+					template.HTMLEscapeString(full),
+					template.HTMLEscapeString(p.Name),
+					template.HTMLEscapeString(disp),
+				))
+			}
+			return template.HTML(strings.Join(parts, "<br>"))
 		},
 	}
 
@@ -138,20 +176,6 @@ func generateHTMLReport(data ReportData) string {
 
   .path { font-family: "SFMono-Regular", Consolas, monospace; font-size: .8rem; color: #4a5568; }
 
-  /* ---- Timeline ---- */
-  .timeline { }
-  .timeline-item { display: flex; gap: 1rem; padding: .6rem 0;
-                   border-bottom: 1px solid #f0f4f8; align-items: flex-start; cursor: pointer; }
-  .timeline-item:last-child { border-bottom: none; }
-  .timeline-item:hover { background: #f7fafc; border-radius: .4rem; }
-  .timeline-item.active .tl-seq { background: #3182ce; color: #fff; }
-  .tl-seq { flex-shrink: 0; width: 2rem; height: 2rem; border-radius: 50%;
-             background: #ebf4ff; color: #3182ce; font-size: .75rem; font-weight: 700;
-             display: flex; align-items: center; justify-content: center; transition: background .15s; }
-  .tl-op { font-weight: 600; font-size: .85rem; }
-  .tl-time { font-size: .75rem; color: #a0aec0; }
-  .tl-detail { font-size: .78rem; color: #718096; margin-top: .15rem; }
-
   /* ---- Code Block ---- */
   .code-block { background: #1a202c; color: #e2e8f0; border-radius: .5rem;
                 padding: 1rem 1.25rem; overflow: auto; max-height: 24rem;
@@ -208,8 +232,8 @@ func generateHTMLReport(data ReportData) string {
       <div class="meta">{{.WorkflowPath}} &nbsp;·&nbsp; Run ID: {{.RunID}}</div>
     </div>
     <div style="text-align:right">
-      <span class="badge {{phaseClass .Execution.Phase}}" style="font-size:.95rem;padding:.35rem 1rem">
-        {{.Execution.Phase}}
+      <span class="badge {{phaseClass (execPhase .Execution)}}" style="font-size:.95rem;padding:.35rem 1rem">
+        {{execPhase .Execution}}
       </span>
       <div class="meta" style="margin-top:.4rem">{{fmtTime .StartTime}}</div>
     </div>
@@ -251,6 +275,7 @@ func generateHTMLReport(data ReportData) string {
       <thead>
         <tr>
           <th>#</th><th>Task Name</th><th>Path</th><th>Template</th><th>Phase</th>
+          <th>Inputs</th><th>Outputs</th>
           <th>Started</th><th>Finished</th><th>Duration</th>
         </tr>
       </thead>
@@ -258,10 +283,16 @@ func generateHTMLReport(data ReportData) string {
         {{range $i, $t := .Execution.Tasks}}
         <tr>
           <td style="color:#a0aec0">{{add $i 1}}</td>
-          <td><strong>{{$t.Name}}</strong></td>
-          <td><span class="path">{{$t.Path}}</span></td>
-          <td><span class="path">{{$t.Template}}</span></td>
-          <td><span class="badge {{phaseClass $t.Phase}}">{{$t.Phase}}</span></td>
+          <td><strong>{{$t.TaskName}}</strong></td>
+          <td><span class="path">{{taskPath $t}}</span></td>
+          <td><span class="path">{{$t.TemplateName}}</span></td>
+          <td><span class="badge {{phaseClass (taskPhase $t)}}">{{taskPhase $t}}</span></td>
+          <td style="font-size:.78rem;color:#4a5568;font-family:monospace;max-width:200px;word-break:break-all">
+            {{if $t.Inputs}}{{fmtParams $t.Inputs.Parameters}}{{else}}<span style="color:#cbd5e0">—</span>{{end}}
+          </td>
+          <td style="font-size:.78rem;color:#4a5568;font-family:monospace;max-width:200px;word-break:break-all">
+            {{if $t.Outputs}}{{fmtParams $t.Outputs.Parameters}}{{else}}<span style="color:#cbd5e0">—</span>{{end}}
+          </td>
           <td style="font-size:.8rem;color:#718096">
             {{if $t.Metrics}}{{$t.Metrics.StartedAt}}{{end}}
           </td>
@@ -277,30 +308,8 @@ func generateHTMLReport(data ReportData) string {
     </table>
   </div>
 
-  <!-- Timeline & Snapshot Explorer -->
-  <div class="grid">
-    <!-- Store Change Timeline -->
-    <div class="card" style="overflow-y:auto;max-height:60vh">
-      <h2>Store Change Timeline</h2>
-      <div class="timeline" id="tl-root">
-        {{range .Snapshots}}
-        <div class="timeline-item" id="tl-{{.Seq}}" onclick="snapRender({{add .Seq -1}})">
-          <div class="tl-seq">{{.Seq}}</div>
-          <div>
-            <div class="tl-op">{{.Operation}}
-              <span style="font-size:.75rem;font-weight:400;color:#718096">(entity {{.EntityID}})</span>
-            </div>
-            <div class="tl-time">{{fmtTime .Time}}</div>
-            <div class="tl-detail">
-              {{len .TaskRuns}} task run(s) &nbsp;·&nbsp; {{len .WorkflowRuns}} workflow run(s)
-            </div>
-          </div>
-        </div>
-        {{end}}
-      </div>
-    </div>
-
-    <!-- Snapshot Explorer -->
+  <!-- Snapshot Explorer -->
+  <div style="margin-bottom:1.25rem">
     <div class="card">
       <h2>Snapshot Explorer</h2>
       <div id="snap-controls">
@@ -397,22 +406,38 @@ function renderWfTable(snap, prevWfIdx) {
   return html;
 }
 
+/* ---- format parameter list ---- */
+function fmtParams(params) {
+  if (!params || params.length === 0) return '<span style="color:#cbd5e0">—</span>';
+  return params.map(function(p) {
+    var full = p.value !== undefined && p.value !== null ? String(p.value) : '';
+    var disp = full.length > 40 ? full.slice(0,40) + '…' : full;
+    var titleAttr = full.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return '<span title="' + titleAttr + '"><b>' + esc(p.name) + '</b>=' + esc(disp) + '</span>';
+  }).join('<br>');
+}
+
 /* ---- render task-runs table ---- */
 function renderTaskTable(snap, prevTaskIdx) {
   if (!snap.taskRuns || snap.taskRuns.length === 0) return '';
   var html = '<div class="snap-section-title">Task Runs (' + snap.taskRuns.length + ')</div>'
     + '<table><thead><tr>'
     + '<th>Run ID</th><th>Task Name</th><th>Scope</th><th>Status</th>'
+    + '<th>Inputs</th><th>Outputs</th>'
     + '<th>Message</th><th>Retries</th><th>Token</th><th>Updated At</th>'
     + '</tr></thead><tbody>';
   snap.taskRuns.forEach(function(r) {
     var prev = prevTaskIdx ? prevTaskIdx[r.runID] : null;
     var rowCls = !prev ? ' class="row-new"' : '';
+    var inputParams  = r.inputs  && r.inputs.parameters  ? r.inputs.parameters  : [];
+    var outputParams = r.outputs && r.outputs.parameters ? r.outputs.parameters : [];
     html += '<tr' + rowCls + '>'
       + '<td><span style="font-family:monospace;font-size:.75rem;color:#a0aec0">' + r.runID + '</span></td>'
       + cell(prev, r, 'taskName',   '<strong>' + esc(r.taskName) + '</strong>')
       + cell(prev, r, 'scope',      '<span class="path">' + esc(r.scope || '/') + '</span>')
       + cell(prev, r, 'status',     badge(r.status))
+      + cell(prev, r, 'inputs',     '<span style="font-size:.75rem;font-family:monospace">' + fmtParams(inputParams)  + '</span>')
+      + cell(prev, r, 'outputs',    '<span style="font-size:.75rem;font-family:monospace">' + fmtParams(outputParams) + '</span>')
       + cell(prev, r, 'message',    esc(r.message))
       + cell(prev, r, 'retryCount', '<span style="display:block;text-align:center">' + (r.retryCount||0) + '</span>')
       + cell(prev, r, 'token',      '<span style="font-size:.75rem;color:#a0aec0">' + r.token + '</span>')
@@ -432,16 +457,6 @@ function snapRender(idx) {
   // sync slider + label
   document.getElementById('snap-slider').value = idx;
   document.getElementById('snap-label').textContent = 'Step ' + (idx+1) + ' / ' + TOTAL;
-
-  // highlight active timeline item
-  document.querySelectorAll('.timeline-item').forEach(function(el) {
-    el.classList.remove('active');
-  });
-  var tlItem = document.getElementById('tl-' + (idx+1));
-  if (tlItem) {
-    tlItem.classList.add('active');
-    tlItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
 
   // build previous-snapshot indexes for diff
   var prevWfIdx   = idx > 0 ? indexBy(SNAPS[idx-1].workflowRuns, 'runID') : null;
@@ -486,7 +501,7 @@ if (TOTAL > 0) snapRender(0);
 
 	type tplData struct {
 		WorkflowPath  string
-		RunID         uint64
+		RunID         string
 		StartTime     time.Time
 		Elapsed       time.Duration
 		Execution     *aether.WorkflowExecution

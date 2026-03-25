@@ -1,0 +1,88 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-when-condition",
+        "annotations": {
+            "description": "DAG when condition: check returns status=ok so path-ok runs and path-fail is skipped",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-phase": "main=Succeeded,check=Succeeded,path-ok=Succeeded,path-fail=Skipped"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "check",
+                            "template": "status-check"
+                        },
+                        {
+                            "name": "path-ok",
+                            "template": "handle-ok",
+                            "dependencies": ["check"],
+                            "when": "tasks.check.outputs.parameters.status == \"ok\""
+                        },
+                        {
+                            "name": "path-fail",
+                            "template": "handle-fail",
+                            "dependencies": ["check"],
+                            "when": "tasks.check.outputs.parameters.status == \"fail\""
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "status-check",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "status", "type": "string", "value": "ok"}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "status", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "handle-ok",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "msg", "type": "string", "value": "ok path executed"}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "msg", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "handle-fail",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "msg", "type": "string", "value": "fail path executed"}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "msg", "type": "string"}]
+                    }
+                }
+            }
+        ]
+    }
+}

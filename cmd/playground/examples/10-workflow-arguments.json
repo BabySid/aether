@@ -1,0 +1,71 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "workflow-arguments",
+        "annotations": {
+            "description": "Workflow-level arguments: multiple typed global parameters injected into task via valueFrom",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-phase": "main=Succeeded,run=Succeeded"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "arguments": {
+            "parameters": [
+                {"name": "env",        "type": "string",  "value": "production"},
+                {"name": "batch-size", "type": "int",     "value": 100},
+                {"name": "dry-run",    "type": "bool",    "value": false},
+                {"name": "tags",       "type": "array",   "value": ["v1", "stable"]},
+                {"name": "config",     "type": "object",  "value": {"region": "cn-east-1", "timeout": 30}}
+            ]
+        },
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "run",
+                            "template": "execute",
+                            "arguments": {
+                                "parameters": [
+                                    {"name": "env",        "valueFrom": {"parameter": "workflow.arguments.parameters.env"}},
+                                    {"name": "batch-size", "valueFrom": {"parameter": "workflow.arguments.parameters.batch-size"}},
+                                    {"name": "dry-run",    "valueFrom": {"parameter": "workflow.arguments.parameters.dry-run"}},
+                                    {"name": "tags",       "valueFrom": {"parameter": "workflow.arguments.parameters.tags"}},
+                                    {"name": "config",     "valueFrom": {"parameter": "workflow.arguments.parameters.config"}}
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "execute",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "env",        "type": "string"},
+                            {"name": "batch-size", "type": "int"},
+                            {"name": "dry-run",    "type": "bool"},
+                            {"name": "tags",       "type": "array"},
+                            {"name": "config",     "type": "object"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "ran", "type": "bool", "value": true}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "ran", "type": "bool"}]
+                    }
+                }
+            }
+        ]
+    }
+}

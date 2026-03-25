@@ -3,6 +3,7 @@ package aether
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/model"
@@ -49,7 +50,7 @@ import (
 // trySpawnNextIterations detects a free slot and creates iteration 2.
 // Once all iterations are terminal, results are aggregated into "process-files"
 // and advanceScope walks up to parentRunID=0 to finalize the workflow.
-func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *model.Workflow, startParentRunID uint64) error {
+func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *model.Workflow, startParentRunID string) error {
 	parentRunID := startParentRunID
 
 	for {
@@ -72,7 +73,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 
 		// 3. If this scope is owned by a DAG container, check whether more tasks are
 		// now ready (i.e., all their declared dependencies are terminal).
-		// Skipped for parentRunID=0 (root scope) because the root has no DAG.
+		// Skipped for parentRunID="" (root scope) because the root has no DAG.
 		//
 		// Example — DAG "main": fetch → notify → alert
 		//   advanceScope is called after "fetch" completes (Succeeded).
@@ -81,8 +82,17 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 		//     - "notify" depends on "fetch" → fetch is terminal → notify is ready → CreateTaskRun(notify,Pending)
 		//     - "alert"  depends on "notify" → notify not yet terminal → not ready yet
 		//   After step 3: siblings=[fetch:Succeeded] (stale — notify was just added to the store)
-		if parentRunID != 0 {
-			if err := e.createReadyTasks(ctx, workflowRunID, wf, parentRunID, siblings); err != nil {
+		// 3. Fetch the parent container once (if this is a non-root scope) so that
+		// createReadyTasks can skip its own GetTaskRun, and Step 6 can reuse the same
+		// value without a second round-trip to the store.
+		var currentParentTR *store.TaskRun
+		if parentRunID != "" {
+			var fetchErr error
+			currentParentTR, fetchErr = e.store.GetTaskRun(ctx, parentRunID)
+			if fetchErr != nil {
+				return fetchErr
+			}
+			if err := e.createReadyTasks(ctx, workflowRunID, wf, currentParentTR, siblings); err != nil {
 				return err
 			}
 		}
@@ -99,16 +109,16 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 			return err
 		}
 
-		// 5. Root scope (parentRunID=0): finalize the workflow if all top-level tasks are
+		// 5. Root scope (parentRunID=""): finalize the workflow if all top-level tasks are
 		// terminal, otherwise wait.
 		//
 		// Example — workflow with a single top-level DAG "main":
-		//   advanceScope(parentRunID=0) is called when "main" (DAG container) becomes Succeeded.
+		//   advanceScope(parentRunID="") is called when "main" (DAG container) becomes Succeeded.
 		//   siblings=[main:Succeeded] → allTerminal=true → finalizeWorkflow sets WF to Succeeded.
 		//
 		//   If "main" is still Running (some tasks inside are pending):
 		//   siblings=[main:Running] → allTerminal=false → return nil (wait for next event).
-		if parentRunID == 0 {
+		if parentRunID == "" {
 			if allTerminal(siblings) {
 				e.finalizeWorkflow(ctx, workflowRunID, siblings, wf)
 			}
@@ -128,10 +138,8 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 		//   DAG scope:
 		//     - If any sibling is still non-terminal, stay in progress.
 		//     - All terminal: aggregate children and walk up one level.
-		parentTR, err := e.store.GetTaskRun(ctx, parentRunID)
-		if err != nil {
-			return err
-		}
+		// currentParentTR was fetched in Step 3 above (same loop iteration, parentRunID unchanged).
+		parentTR := currentParentTR
 
 		if parentTR.TemplateType == model.TemplateTypeLoop {
 			// Concurrency refill: spawn pending iterations to fill free slots, even if
@@ -214,7 +222,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID uint64, wf *mod
 //     (markAncestorsRunning walks up the chain at that point).
 //     The controller is responsible for expanding items / evaluating repeatCondition
 //     and spawning iteration TaskRuns.
-func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID uint64, wf *model.Workflow, tr *store.TaskRun) error {
+func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID string, wf *model.Workflow, tr *store.TaskRun) error {
 	switch tr.TemplateType {
 	case model.TemplateTypeDAG:
 		// DAG stays Pending here. It will transition to Running when its first
@@ -234,7 +242,27 @@ func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID uint64, wf *
 		// Loop stays Pending here, mirroring the DAG behaviour.
 		// It transitions to Running only when its first iteration task is dispatched
 		// (markAncestorsRunning walks up the chain at that point).
-		return e.startLoopController(ctx, workflowRunID, wf, tr)
+		//
+		// Resolve call-site arguments into loop inputs before starting the controller
+		// so that startLoopController can build the EvalEnv with WithResolvedInputs and
+		// expressions like "{{inputs.parameters.content-list}}" in itemsFrom resolve correctly.
+		// Persist resolved inputs so trySpawnNextIterations can re-expand the item list
+		// using the same resolved values when spawning additional iterations later.
+		resolvedLoopInputs, err := e.resolveLoopInputs(ctx, workflowRunID, wf, tr)
+		if err != nil {
+			return fmt.Errorf("resolve loop inputs for %q: %w", tr.TaskName, err)
+		}
+		if resolvedLoopInputs != nil {
+			// Use the returned TaskRun directly — no need for a separate GetTaskRun re-fetch.
+			if updated, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
+				RunID:  tr.RunID,
+				Token:  tr.Token,
+				Inputs: resolvedLoopInputs,
+			}); updateErr == nil && updated != nil {
+				tr = updated
+			}
+		}
+		return e.startLoopController(ctx, workflowRunID, wf, tr, resolvedLoopInputs)
 
 	default:
 		return fmt.Errorf("unknown template type %q for task %q", tr.TemplateType, tr.TaskName)
@@ -249,8 +277,10 @@ func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID uint64, wf *
 // This is called immediately after a leaf task is dispatched so that the semantic
 // "Running" state of DAG containers and the WorkflowRun accurately reflects the
 // moment real work begins, rather than the moment a container node was activated.
-func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID uint64, parentRunID uint64) error {
-	for parentRunID != 0 {
+func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string, parentRunID string) error {
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+
+	for parentRunID != "" {
 		ancestor, err := e.store.GetTaskRun(ctx, parentRunID)
 		if err != nil {
 			return err
@@ -267,6 +297,7 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID uint64,
 			Token:   ancestor.Token,
 			Status:  &running,
 			Message: &empty,
+			Metrics: &model.Metrics{StartedAt: startedAt},
 		})
 		if err != nil {
 			// Token mismatch: another goroutine already transitioned this ancestor — stop walking.
@@ -290,6 +321,7 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID uint64,
 		Token:   wfRun.Token,
 		Status:  &running,
 		Message: &empty,
+		Metrics: &model.Metrics{StartedAt: startedAt},
 	})
 	// Token mismatch or already Running — either is fine, not an error.
 	_ = err
@@ -304,7 +336,7 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID uint64,
 // advanceScope call returns. The Token ensures that only the first finalization
 // succeeds and fires workflow-level hooks; subsequent calls are no-ops because
 // the WorkflowRun is no longer Running.
-func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID uint64, topLevelRuns []*store.TaskRun, wf *model.Workflow) {
+func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID string, topLevelRuns []*store.TaskRun, wf *model.Workflow) {
 	phase, msg := aggregatePhase(topLevelRuns)
 
 	wfRun, err := e.store.GetWorkflowRun(ctx, workflowRunID)

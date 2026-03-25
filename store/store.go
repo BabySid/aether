@@ -27,7 +27,7 @@ type WorkflowRunStore interface {
 	CreateWorkflowRun(ctx context.Context, run *WorkflowRun) error
 
 	// GetWorkflowRun retrieves a workflow run by ID.
-	GetWorkflowRun(ctx context.Context, runID uint64) (*WorkflowRun, error)
+	GetWorkflowRun(ctx context.Context, runID string) (*WorkflowRun, error)
 
 	// UpdateWorkflowRun persists mutable fields of a workflow run.
 	// Only non-nil pointer fields in run are written; nil fields are left unchanged.
@@ -56,7 +56,7 @@ type TaskRunStore interface {
 	CreateTaskRun(ctx context.Context, run *TaskRun) error
 
 	// GetTaskRun retrieves a task run by ID.
-	GetTaskRun(ctx context.Context, taskRunID uint64) (*TaskRun, error)
+	GetTaskRun(ctx context.Context, taskRunID string) (*TaskRun, error)
 
 	// UpdateTaskRun persists mutable fields of a task run.
 	// Only non-nil pointer fields in run are written; nil fields are left unchanged.
@@ -67,13 +67,20 @@ type TaskRunStore interface {
 	UpdateTaskRun(ctx context.Context, run *TaskRun) (*TaskRun, error)
 
 	// ListTaskRuns returns all task runs for a given workflow run.
-	ListTaskRuns(ctx context.Context, workflowRunID uint64) ([]*TaskRun, error)
+	ListTaskRuns(ctx context.Context, workflowRunID string) ([]*TaskRun, error)
 
 	// ListTaskRunsByParent returns task runs that share the same parent container.
-	// parentRunID=0 returns top-level tasks (no parent container).
+	// parentRunID="" returns top-level tasks (no parent container).
 	// This is the core query for scoped/hierarchical DAG scheduling:
 	// advanceScope uses it to find sibling tasks within the same scope.
-	ListTaskRunsByParent(ctx context.Context, workflowRunID uint64, parentRunID uint64) ([]*TaskRun, error)
+	ListTaskRunsByParent(ctx context.Context, workflowRunID string, parentRunID string) ([]*TaskRun, error)
+
+	// ListActiveTaskRuns returns all non-terminal task runs (Pending or Running) across
+	// all workflow runs that have a Deadline set.
+	// Used by the timeout watchdog to detect tasks that have exceeded their Deadline.
+	// Note: Pending tasks are included because the Deadline is written at dispatch time,
+	// before OnTaskStarted transitions the task to Running.
+	ListActiveTaskRuns(ctx context.Context) ([]*TaskRun, error)
 }
 
 // WorkflowTemplateStore manages external workflow template loading.
@@ -90,7 +97,7 @@ type WorkflowTemplateStore interface {
 // Mutable fields use pointer types: nil means "do not modify this field" in UpdateWorkflowRun.
 type WorkflowRun struct {
 	// Immutable
-	RunID     uint64
+	RunID     string
 	Workflow  json.RawMessage // immutable raw workflow JSON
 	CreatedAt time.Time
 
@@ -99,6 +106,9 @@ type WorkflowRun struct {
 	Message *string
 	Outputs *model.Outputs
 	Metrics *model.Metrics
+	// Deadline is the absolute time after which the workflow is considered timed out.
+	// Set by the Engine at Submit time from wf.Spec.Timeout; nil means no workflow-level deadline.
+	Deadline *time.Time
 
 	// Internal control
 	// Token is an opaque uint64 write token. The framework passes it through unchanged;
@@ -119,28 +129,33 @@ type WorkflowRun struct {
 // Immutable fields (set at creation, never modified):
 //
 //	RunID, WorkflowRunID, ParentRunID, Depth, Scope, TaskName,
-//	TemplateName, TemplateType, Inputs, CreatedAt.
+//	TemplateName, TemplateType, CreatedAt.
 //
 // Mutable fields use pointer types: nil means "do not modify this field" in UpdateTaskRun.
 type TaskRun struct {
 	// Immutable
-	RunID         uint64
-	WorkflowRunID uint64
-	ParentRunID   uint64 // parent container TaskRun ID (0 = top-level scope)
+	RunID         string
+	WorkflowRunID string
+	ParentRunID   string // parent container TaskRun ID ("" = top-level scope)
 	Depth         int    // tree depth (0 = top-level), created as parent.Depth + 1
 	Scope         string // direct-parent path segment, e.g. "main-pipeline/" or "batch-review.loop[0]/"
 	TaskName      string // task name within current scope (unique among siblings)
 	TemplateName  string // referenced template name
 	TemplateType  string // "dag" / "task" / "loop"
-	Inputs        *model.Inputs
 	CreatedAt     time.Time
 
 	// Mutable (nil = do not modify in UpdateTaskRun)
+	// Inputs holds the resolved task inputs. For suspended tasks it accumulates
+	// successive Resume payloads merged on top of the original resolved inputs.
+	Inputs     *model.Inputs
 	Status     *model.Phase
 	Message    *string
 	Outputs    *model.Outputs
 	Metrics    *model.Metrics
 	RetryCount *int // number of retries already consumed (0 = first attempt, 1 = first retry, …)
+	// Deadline is the absolute time after which the task is considered timed out.
+	// Set by the Engine at dispatch time from the resolved assignment.Timeout; nil means no deadline.
+	Deadline *time.Time
 
 	// Internal control
 	// Token is an opaque uint64 write token. The framework passes it through unchanged;

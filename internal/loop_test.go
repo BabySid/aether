@@ -254,10 +254,10 @@ func TestAggregateResults_SkippedCountsAsSuccess(t *testing.T) {
 func TestAggregateResults_Last_Default(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("first")}},
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{{Name: "status", Value: rawJSON("first")}}},
 		}},
 		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("last")}},
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{{Name: "status", Value: rawJSON("last")}}},
 		}},
 	}
 	phase, _, outputs := AggregateResults(results, nil) // nil → default "last"
@@ -278,10 +278,10 @@ func TestAggregateResults_Last_WithFilter(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded},
 		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("ok")},
 				{Name: "code", Value: rawJSON(0)},
-			},
+			}},
 		}},
 	}
 	phase, _, outputs := AggregateResults(results, &model.Aggregate{
@@ -311,10 +311,10 @@ func TestAggregateResults_Last_NoOutputs(t *testing.T) {
 func TestAggregateResults_First(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("first")}},
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{{Name: "status", Value: rawJSON("first")}}},
 		}},
 		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{{Name: "status", Value: rawJSON("last")}},
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{{Name: "status", Value: rawJSON("last")}}},
 		}},
 	}
 	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyFirst})
@@ -333,22 +333,22 @@ func TestAggregateResults_First(t *testing.T) {
 func TestAggregateResults_List_AllParams(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("ok")},
 				{Name: "code", Value: rawJSON(0)},
-			},
+			}},
 		}},
 		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("fail")},
 				{Name: "code", Value: rawJSON(1)},
-			},
+			}},
 		}},
 		{Index: 2, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("ok")},
 				{Name: "code", Value: rawJSON(0)},
-			},
+			}},
 		}},
 	}
 	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyList})
@@ -372,16 +372,16 @@ func TestAggregateResults_List_AllParams(t *testing.T) {
 func TestAggregateResults_List_WithFilter(t *testing.T) {
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("ok")},
 				{Name: "code", Value: rawJSON(0)},
-			},
+			}},
 		}},
 		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("fail")},
 				{Name: "code", Value: rawJSON(1)},
-			},
+			}},
 		}},
 	}
 	phase, _, outputs := AggregateResults(results, &model.Aggregate{
@@ -411,22 +411,22 @@ func TestAggregateResults_List_MissingParamPaddedWithNull(t *testing.T) {
 	// iter[1] has no "code" → code array should be [0, null, 2]
 	results := []LoopIterationResult{
 		{Index: 0, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("ok")},
 				{Name: "code", Value: rawJSON(0)},
-			},
+			}},
 		}},
 		{Index: 1, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("succ")},
 				// no "code" — should be padded with null
-			},
+			}},
 		}},
 		{Index: 2, Phase: model.PhaseSucceeded, Outputs: &model.Outputs{
-			Parameters: []model.Parameter{
+			ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{
 				{Name: "status", Value: rawJSON("ok")},
 				{Name: "code", Value: rawJSON(2)},
-			},
+			}},
 		}},
 	}
 	phase, _, outputs := AggregateResults(results, &model.Aggregate{Strategy: model.AggregateStrategyList})
@@ -480,10 +480,10 @@ func TestBuildRepeatEnv_WithLastRun(t *testing.T) {
 		TaskName: "do-work",
 		Status:   phasePtr(model.PhaseSucceeded),
 		Outputs: &model.Outputs{
-			Code: 0,
-			Msg:  "ok",
-			Parameters: []model.Parameter{
-				{Name: "count", Value: rawJSON(3)},
+			ExecOutputs: model.ExecOutputs{
+				Code:       0,
+				Message:    "ok",
+				Parameters: []model.Parameter{{Name: "count", Value: rawJSON(3)}},
 			},
 		},
 	}

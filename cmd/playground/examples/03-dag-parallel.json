@@ -1,0 +1,108 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-parallel-join",
+        "annotations": {
+            "description": "DAG parallel execution (A and B run concurrently) then join node C depends on both",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-count": "4",
+            "test:expect-task-phase": "main=Succeeded,task-a=Succeeded,task-b=Succeeded,join=Succeeded"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "task-a",
+                            "template": "worker-a"
+                        },
+                        {
+                            "name": "task-b",
+                            "template": "worker-b"
+                        },
+                        {
+                            "name": "join",
+                            "template": "merge",
+                            "dependencies": ["task-a", "task-b"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "result-a",
+                                        "valueFrom": {"parameter": "tasks.task-a.outputs.parameters.result"}
+                                    },
+                                    {
+                                        "name": "result-b",
+                                        "valueFrom": {"parameter": "tasks.task-b.outputs.parameters.result"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "worker-a",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "result", "type": "object", "value": {"source": "A", "value": 10}}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "object"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "worker-b",
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "result", "type": "object", "value": {"source": "B", "value": 20}}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "object"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "merge",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "result-a", "type": "object"},
+                            {"name": "result-b", "type": "object"}
+                        ]
+                    },
+                    "executor": {
+                        "type": "echo",
+                        "config": {
+                            "outputs": [
+                                {"name": "merged", "type": "bool", "value": true},
+                                {"name": "total",  "type": "int",  "value": 30}
+                            ]
+                        }
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "merged", "type": "bool"},
+                            {"name": "total",  "type": "int"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

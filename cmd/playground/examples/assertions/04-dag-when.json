@@ -1,0 +1,23 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "check",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "status", "value": "ok"}
+      ]
+    },
+    {
+      "taskName": "path-ok",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "msg", "value": "ok path executed"}
+      ]
+    },
+    {
+      "taskName": "path-fail",
+      "expectPhase": "Skipped"
+    }
+  ]
+}
