@@ -196,29 +196,35 @@ func TestMergeOutputsWithDecl_FillEmptyActualValue(t *testing.T) {
 	}
 }
 
-func TestMergeOutputsWithDecl_AppendMissingFromDecl(t *testing.T) {
+func TestMergeOutputsWithDecl_DeclOnlyFallback(t *testing.T) {
+	// Executor did not produce "y" at all; decl declares it with a static value.
+	// Whitelist: only "y" is declared, so only "y" appears in result.
+	// "x" (executor-only, not declared) is excluded.
 	actual := outputs(param("x", 1))
 	decl := outputs(param("y", 2))
 	result := MergeOutputsWithDecl(actual, decl)
-	if len(result.Parameters) != 2 {
-		t.Fatalf("expected 2 params, got %d", len(result.Parameters))
-	}
-	if paramValue(result.Parameters, "x") != float64(1) {
-		t.Fatal("x should be preserved")
+	if len(result.Parameters) != 1 {
+		t.Fatalf("expected 1 param (whitelist), got %d", len(result.Parameters))
 	}
 	if paramValue(result.Parameters, "y") != float64(2) {
-		t.Fatal("y should be appended from decl")
+		t.Fatalf("y should come from decl fallback, got %v", paramValue(result.Parameters, "y"))
+	}
+	if paramValue(result.Parameters, "x") != nil {
+		t.Fatal("x is not declared — must be excluded by whitelist")
 	}
 }
 
 func TestMergeOutputsWithDecl_SkipDeclNullValues(t *testing.T) {
+	// Whitelist semantics: decl declares "b" with null value.
+	// "b" is skipped (null declared value, executor also didn't produce it).
+	// "a" is excluded because it's not in the whitelist.
+	// Result: 0 parameters.
 	actual := outputs(param("a", 1))
-	// decl parameter with null value should be ignored.
 	declParams := []model.Parameter{{Name: "b", Value: nil}}
 	decl := &model.Outputs{ExecOutputs: model.ExecOutputs{Parameters: declParams}}
 	result := MergeOutputsWithDecl(actual, decl)
-	if len(result.Parameters) != 1 {
-		t.Fatalf("null-value decl param should be skipped, got %d params", len(result.Parameters))
+	if len(result.Parameters) != 0 {
+		t.Fatalf("null-value decl param + undeclared 'a' should yield 0 params, got %d", len(result.Parameters))
 	}
 }
 
@@ -235,13 +241,42 @@ func TestMergeOutputsWithDecl_NoMutationOfActual(t *testing.T) {
 	}
 }
 
+func TestMergeOutputsWithDecl_WhitelistFiltersUndeclaredParams(t *testing.T) {
+	// Executor produced "summary", "ok", "raw", "count".
+	// Decl only declares "summary" and "ok".
+	// Result must contain only "summary" and "ok".
+	actual := outputs(param("raw", "data"), param("count", 5), param("summary", "done"), param("ok", true))
+	decl := outputs(param("summary", ""), param("ok", false))
+	result := MergeOutputsWithDecl(actual, decl)
+	if len(result.Parameters) != 2 {
+		t.Fatalf("expected 2 whitelisted params, got %d: %v", len(result.Parameters), result.Parameters)
+	}
+	if paramValue(result.Parameters, "summary") != "done" {
+		t.Fatalf("summary should keep executor value 'done', got %v", paramValue(result.Parameters, "summary"))
+	}
+	if paramValue(result.Parameters, "ok") != true {
+		t.Fatalf("ok should keep executor value true, got %v", paramValue(result.Parameters, "ok"))
+	}
+	if paramValue(result.Parameters, "raw") != nil {
+		t.Fatal("raw is not declared — must be excluded")
+	}
+	if paramValue(result.Parameters, "count") != nil {
+		t.Fatal("count is not declared — must be excluded")
+	}
+}
+
 func TestMergeOutputsWithDecl_PreservesOtherOutputFields(t *testing.T) {
+	// Only "b" is declared — "a" (executor-only) should be excluded.
 	actual := &model.Outputs{
 		ExecOutputs: model.ExecOutputs{Parameters: []model.Parameter{param("a", 1)}},
 	}
 	decl := outputs(param("b", 2))
 	result := MergeOutputsWithDecl(actual, decl)
-	if len(result.Parameters) != 2 {
-		t.Fatalf("expected 2 params, got %d", len(result.Parameters))
+	// "a" not declared → excluded; "b" not in executor but has decl value → included
+	if len(result.Parameters) != 1 {
+		t.Fatalf("expected 1 param (only declared 'b'), got %d", len(result.Parameters))
+	}
+	if paramValue(result.Parameters, "b") != float64(2) {
+		t.Fatalf("expected b=2 from decl fallback, got %v", paramValue(result.Parameters, "b"))
 	}
 }

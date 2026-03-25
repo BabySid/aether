@@ -44,19 +44,22 @@ func MergeInputsWithPayload(existing *model.Inputs, payload map[string]any) *mod
 	return &model.Inputs{Parameters: MergeParameters(base, payloadParams)}
 }
 
-// MergeOutputsWithDecl merges template-declared output parameter values into
-// actual executor outputs. The actual executor value always wins; the declared
-// value is used only as a fallback when the executor left the parameter absent
-// or with an empty/null value.
+// MergeOutputsWithDecl filters and fills executor output parameters according to
+// the template-declared outputs. The declared parameter list acts as a whitelist:
+// only parameters explicitly declared in decl are included in the result.
 //
 // Rules:
-//   - Parameters present in actual with a non-empty value → kept as-is.
-//   - Parameters present in actual with an empty/null value → filled by decl value (if non-empty).
-//   - Parameters absent in actual → appended from decl (preserving Name/Type/Description/Value).
-//   - Declared parameters with an empty or null value are skipped entirely.
+//   - When decl is nil or declares no parameters → actual is returned unchanged
+//     (no filtering; executor outputs are preserved as-is).
+//   - Parameters declared in decl AND produced by the executor → executor value wins.
+//   - Parameters declared in decl with empty/null executor value → filled by the
+//     declared static value (if non-empty).
+//   - Parameters produced by the executor but NOT declared in decl → excluded
+//     (whitelist filtering enforces protocol semantics).
+//   - Parameters declared in decl but absent from both executor output and the
+//     declared static value → excluded from the result (nothing to emit).
 //
 // Returns a new *model.Outputs; actual is not modified.
-// If decl is nil or has no parameters with values, actual is returned unchanged.
 func MergeOutputsWithDecl(actual *model.Outputs, decl *model.Outputs) *model.Outputs {
 	if decl == nil || len(decl.Parameters) == 0 {
 		return actual
@@ -64,29 +67,31 @@ func MergeOutputsWithDecl(actual *model.Outputs, decl *model.Outputs) *model.Out
 	if actual == nil {
 		actual = &model.Outputs{}
 	}
-	// Work on a shallow copy of the Parameters slice so we don't mutate the original.
-	merged := make([]model.Parameter, len(actual.ExecOutputs.Parameters))
-	copy(merged, actual.ExecOutputs.Parameters)
 
-	// Build index over the copy.
-	actualIdx := make(map[string]int, len(merged))
-	for i, p := range merged {
-		actualIdx[p.Name] = i
+	// Build a lookup of actual (executor-produced) parameters.
+	actualIdx := make(map[string]model.Parameter, len(actual.ExecOutputs.Parameters))
+	for _, p := range actual.ExecOutputs.Parameters {
+		actualIdx[p.Name] = p
 	}
 
+	// Iterate declared parameters as the whitelist; actual params not in decl are dropped.
+	filtered := make([]model.Parameter, 0, len(decl.ExecOutputs.Parameters))
 	for _, declP := range decl.ExecOutputs.Parameters {
-		if len(declP.Value) == 0 || string(declP.Value) == "null" {
-			continue
-		}
-		if i, found := actualIdx[declP.Name]; found {
-			// Fill only when executor left the value empty or null.
-			if len(merged[i].Value) == 0 || string(merged[i].Value) == "null" {
-				merged[i].Value = declP.Value
+		if actualP, found := actualIdx[declP.Name]; found {
+			// Executor produced this param — use its value.
+			// If executor value is empty/null, fall back to declared static value.
+			if (len(actualP.Value) == 0 || string(actualP.Value) == "null") &&
+				len(declP.Value) > 0 && string(declP.Value) != "null" {
+				actualP.Value = declP.Value
 			}
+			filtered = append(filtered, actualP)
 		} else {
-			// Parameter not produced by the executor — append the declared entry.
-			actualIdx[declP.Name] = len(merged)
-			merged = append(merged, model.Parameter{
+			// Executor did not produce this param — use declared static value as fallback.
+			// Skip if the declared value is also empty/null (nothing to emit).
+			if len(declP.Value) == 0 || string(declP.Value) == "null" {
+				continue
+			}
+			filtered = append(filtered, model.Parameter{
 				Name:        declP.Name,
 				Type:        declP.Type,
 				Description: declP.Description,
@@ -96,6 +101,6 @@ func MergeOutputsWithDecl(actual *model.Outputs, decl *model.Outputs) *model.Out
 	}
 
 	result := *actual // shallow copy of the Outputs struct
-	result.ExecOutputs.Parameters = merged
+	result.ExecOutputs.Parameters = filtered
 	return &result
 }
