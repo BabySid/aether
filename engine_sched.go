@@ -11,24 +11,6 @@ import (
 	"github.com/BabySid/aether/store"
 )
 
-// computeMetricsFinish fills FinishedAt and Duration from the current wall clock
-// and an optional StartedAt timestamp already stored in existing.
-func computeMetricsFinish(existing *model.Metrics) *model.Metrics {
-	finishedAt := time.Now().UTC()
-	finishedAtStr := finishedAt.Format(time.RFC3339)
-	m := &model.Metrics{FinishedAt: finishedAtStr}
-	if existing != nil {
-		m.StartedAt = existing.StartedAt
-		m.Retries = existing.Retries
-		if existing.StartedAt != "" {
-			if startedAt, err := time.Parse(time.RFC3339, existing.StartedAt); err == nil {
-				m.Duration = finishedAt.Sub(startedAt).Round(time.Millisecond).String()
-			}
-		}
-	}
-	return m
-}
-
 // advanceScope is the core iterative scheduling function.
 // It processes the scope identified by startParentRunID, then walks up the scope
 // tree until the workflow is finalized or a scope is still in progress.
@@ -230,7 +212,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 			}
 		}
 
-		containerMetrics := computeMetricsFinish(tr.Metrics)
+		containerMetrics := internal.ComputeMetricsFinish(tr.Metrics)
 
 		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   tr.RunID,
@@ -394,7 +376,7 @@ func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID string, top
 		return
 	}
 	// Compute FinishedAt/Duration from the StartedAt recorded at workflow start.
-	wfMetrics := computeMetricsFinish(wfRun.Metrics)
+	wfMetrics := internal.ComputeMetricsFinish(wfRun.Metrics)
 
 	// Collect workflow-level outputs from the entrypoint DAG container.
 	// topLevelRuns contains the single entrypoint container (e.g. main DAG).

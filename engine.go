@@ -483,15 +483,8 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	//
 	// StartedAt was recorded by OnTaskStarted. FinishedAt and Duration are
 	// computed here from the current wall clock and the stored StartedAt.
-	finishedAt := time.Now().UTC()
-	finishedAtStr := finishedAt.Format(time.RFC3339)
-	taskMetrics := &model.Metrics{FinishedAt: finishedAtStr}
-	if tr.Metrics != nil && tr.Metrics.StartedAt != "" {
-		taskMetrics.StartedAt = tr.Metrics.StartedAt
-		if startedAt, parseErr := time.Parse(time.RFC3339, tr.Metrics.StartedAt); parseErr == nil {
-			taskMetrics.Duration = finishedAt.Sub(startedAt).Round(time.Millisecond).String()
-		}
-	}
+	// Retries is taken from tr.RetryCount (authoritative) rather than Metrics.Retries.
+	taskMetrics := internal.ComputeMetricsFinish(tr.Metrics)
 	if tr.RetryCount != nil && *tr.RetryCount > 0 {
 		taskMetrics.Retries = *tr.RetryCount
 	}

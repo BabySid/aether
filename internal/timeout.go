@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/BabySid/aether/model"
 )
 
 // durationRegex matches durations like "30s", "5m", "1h", "1h30m", "500ms".
@@ -47,4 +49,25 @@ func ParseDuration(s string) (time.Duration, error) {
 	default:
 		return 0, fmt.Errorf("invalid duration unit: %q", m[2])
 	}
+}
+
+// ComputeMetricsFinish computes FinishedAt and Duration using the current wall
+// clock, carrying over StartedAt and Retries from existing (if non-nil).
+//
+// It is used whenever a container (DAG, Loop) or workflow run transitions to a
+// terminal state so that the report can display accurate timing.
+func ComputeMetricsFinish(existing *model.Metrics) *model.Metrics {
+	finishedAt := time.Now().UTC()
+	finishedAtStr := finishedAt.Format(time.RFC3339)
+	m := &model.Metrics{FinishedAt: finishedAtStr}
+	if existing != nil {
+		m.StartedAt = existing.StartedAt
+		m.Retries = existing.Retries
+		if existing.StartedAt != "" {
+			if startedAt, err := time.Parse(time.RFC3339, existing.StartedAt); err == nil {
+				m.Duration = finishedAt.Sub(startedAt).Round(time.Millisecond).String()
+			}
+		}
+	}
+	return m
 }
