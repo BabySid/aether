@@ -6,10 +6,18 @@
 // output parameters, each with an explicit type and optional value.
 // Supported types: int, bool, string, array, object.
 //
+// It also supports a "suspend" mode: when config.suspend=true the executor
+// returns ExecCodeSuspended on the first call, putting the task into
+// PhaseRunning (awaiting resume). The caller must invoke eng.Resume() with
+// a payload containing {"__resumed": true} (or any other key) to unblock the
+// task. On the resumed call the executor detects the "__resumed" marker in
+// inputs, skips the suspend gate, and completes normally.
+//
 // On execution:
 //  1. All input parameters are printed to the log.
-//  2. Outputs are built as a *mix* of inputs + declared outputs:
-//     - Inputs are echoed back first.
+//  2. If suspend=true and not yet resumed → return ExecCodeSuspended.
+//  3. Outputs are built as a *mix* of inputs + declared outputs:
+//     - Inputs are echoed back first (excluding the __resumed marker).
 //     - Outputs defined in config are merged on top (override same-named inputs).
 //     - If an output entry carries no value, a zero-value for the declared type is used.
 //
@@ -18,6 +26,7 @@
 //	"executor": {
 //	  "type": "echo",
 //	  "config": {
+//	    "suspend": true,
 //	    "outputs": [
 //	      {"name": "status",  "type": "string", "value": "ok"},
 //	      {"name": "count",   "type": "int",    "value": 42},
@@ -60,8 +69,16 @@ type echoOutput struct {
 
 // echoConfig is the parsed form of the executor config block.
 type echoConfig struct {
+	// Suspend, when true, causes the executor to return ExecCodeSuspended on the
+	// first invocation. The task moves to PhaseRunning (awaiting external resume).
+	// Call eng.Resume() with payload {"__resumed": true} to unblock the task.
+	Suspend bool         `json:"suspend,omitempty"`
 	Outputs []echoOutput `json:"outputs"`
 }
+
+// resumedMarker is the input parameter name injected by the test/caller via
+// eng.Resume() to signal that this is a resumed (not first) execution.
+const resumedMarker = "__resumed"
 
 // zeroValueFor returns the JSON zero-value for each supported type.
 func zeroValueFor(t echoCapabilityType) json.RawMessage {
@@ -121,11 +138,17 @@ func (e *EchoExecutor) Type() string { return "echo" }
 
 func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) (*model.ExecOutputs, error) {
 	// ── Step 1: echo all inputs, build base output map ──────────────────────
+	// Skip the __resumed marker from the visible output (it is an internal signal).
 	paramIdx := make(map[string]int) // name → index in params slice
 	var params []model.Parameter
+	resumed := false
 
 	if req.Inputs != nil {
 		for _, p := range req.Inputs.Parameters {
+			if p.Name == resumedMarker {
+				resumed = true
+				continue // do not include in outputs
+			}
 			paramIdx[p.Name] = len(params)
 			params = append(params, model.Parameter{
 				Name:  p.Name,
@@ -141,14 +164,30 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 		inputLines = append(inputLines, fmt.Sprintf("%s(%s)=%s", p.Name, p.Type, string(p.Value)))
 	}
 	if len(inputLines) == 0 {
-		log.Printf("[echo] taskRunID=%s  inputs=(none)", req.TaskRunID)
+		log.Printf("[echo] taskRunID=%s  inputs=(none) resumed=%v", req.TaskRunID, resumed)
 	} else {
-		log.Printf("[echo] taskRunID=%s  inputs=[%s]", req.TaskRunID, strings.Join(inputLines, ", "))
+		log.Printf("[echo] taskRunID=%s  inputs=[%s] resumed=%v", req.TaskRunID, strings.Join(inputLines, ", "), resumed)
+	}
+
+	// ── Step 2b: suspend gate ────────────────────────────────────────────────
+	// Parse config early so we can check the suspend flag before doing any work.
+	var cfg echoConfig
+	if len(req.Config) > 0 {
+		if err := json.Unmarshal(req.Config, &cfg); err != nil {
+			log.Printf("[echo] taskRunID=%s  WARNING: cannot parse config: %v", req.TaskRunID, err)
+		}
+	}
+
+	if cfg.Suspend && !resumed {
+		log.Printf("[echo] taskRunID=%s  suspended — call Resume with {%q: true} to continue", req.TaskRunID, resumedMarker)
+		return &model.ExecOutputs{
+			Code:    model.ExecCodeSuspended,
+			Message: "suspended; awaiting external resume signal",
+		}, nil
 	}
 
 	// ── Step 3: parse declared outputs from config and merge ─────────────────
 	if len(req.Config) > 0 {
-		var cfg echoConfig
 		if err := json.Unmarshal(req.Config, &cfg); err != nil {
 			log.Printf("[echo] taskRunID=%s  WARNING: cannot parse config: %v", req.TaskRunID, err)
 		} else {

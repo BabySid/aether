@@ -1,0 +1,71 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "await-suspend-demo"
+    },
+    "spec": {
+        "entrypoint": "pipeline",
+        "templates": [
+            {
+                "dag": {
+                    "name": "pipeline",
+                    "tasks": [
+                        {
+                            "name": "prepare",
+                            "executor": {
+                                "type": "echo",
+                                "config": {
+                                    "outputs": [
+                                        {
+                                            "name": "status",
+                                            "type": "string",
+                                            "value": "ready"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "name": "await-approval",
+                            "dependencies": [
+                                "prepare"
+                            ],
+                            "executor": {
+                                "type": "echo",
+                                "config": {
+                                    "suspend": true,
+                                    "outputs": [
+                                        {
+                                            "name": "approved",
+                                            "type": "bool",
+                                            "value": true
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "name": "finalize",
+                            "dependencies": [
+                                "await-approval"
+                            ],
+                            "executor": {
+                                "type": "echo",
+                                "config": {
+                                    "outputs": [
+                                        {
+                                            "name": "result",
+                                            "type": "string",
+                                            "value": "done"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

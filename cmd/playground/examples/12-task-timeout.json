@@ -1,0 +1,68 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "task-timeout-demo"
+    },
+    "spec": {
+        "entrypoint": "pipeline",
+        "templates": [
+            {
+                "dag": {
+                    "name": "pipeline",
+                    "tasks": [
+                        {
+                            "name": "prepare",
+                            "executor": {
+                                "type": "echo",
+                                "config": {
+                                    "outputs": [
+                                        {
+                                            "name": "status",
+                                            "type": "string",
+                                            "value": "ready"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "name": "wait-external",
+                            "dependencies": [
+                                "prepare"
+                            ],
+                            "timeout": "1s",
+                            "continueOn": {
+                                "timeout": true
+                            },
+                            "executor": {
+                                "type": "echo",
+                                "config": {
+                                    "suspend": true
+                                }
+                            }
+                        },
+                        {
+                            "name": "finalize",
+                            "dependencies": [
+                                "wait-external"
+                            ],
+                            "executor": {
+                                "type": "echo",
+                                "config": {
+                                    "outputs": [
+                                        {
+                                            "name": "result",
+                                            "type": "string",
+                                            "value": "completed-after-timeout"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

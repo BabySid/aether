@@ -8,6 +8,7 @@
 // Assertion file schema:
 //
 //	{
+//	  "skipIntegration": true,          // optional; skip this case in TestIntegration
 //	  "expectPhase":     "Succeeded",   // required
 //	  "expectTaskCount": 4,             // optional; total TaskRun count
 //	  "expectTasks": [                  // optional; per-task expectations
@@ -60,25 +61,39 @@ type TaskAssertion struct {
 
 // WorkflowAssertion is the top-level structure of an assertion file.
 type WorkflowAssertion struct {
+	// SkipIntegration, when true, causes TestIntegration to skip this example.
+	// Use it for cases that require special orchestration (e.g. suspend+resume)
+	// and are covered by a dedicated test function instead.
+	SkipIntegration bool            `json:"skipIntegration,omitempty"`
 	ExpectPhase     string          `json:"expectPhase"`
 	ExpectTaskCount *int            `json:"expectTaskCount,omitempty"`
 	ExpectTasks     []TaskAssertion `json:"expectTasks,omitempty"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// engine wiring helper
+// engine wiring helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-func runWorkflow(t *testing.T, wfPath string, timeoutSec int) *aether.WorkflowExecution {
+// engineBundle holds all components wired together for a single workflow run.
+type engineBundle struct {
+	eng      *aether.Engine
+	memStore *MemoryStore
+	brok     *LocalBroker
+	finishCh chan struct{}
+	cancel   context.CancelFunc
+	ctx      context.Context
+}
+
+// newEngineBundle creates a fully-wired engine, broker, and store.
+// watchInterval controls how often the timeout watcher scans; use a smaller
+// value (e.g. 100ms) when testing task-level timeouts for faster detection.
+// The caller is responsible for calling eng.Start() and eng.Stop().
+func newEngineBundle(t *testing.T, timeoutSec int, watchInterval ...time.Duration) *engineBundle {
 	t.Helper()
 
-	raw, err := os.ReadFile(wfPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", wfPath, err)
-	}
-	var wf model.Workflow
-	if err := json.Unmarshal(raw, &wf); err != nil {
-		t.Fatalf("parse %s: %v", wfPath, err)
+	interval := 500 * time.Millisecond
+	if len(watchInterval) > 0 {
+		interval = watchInterval[0]
 	}
 
 	reg := executor.NewRegistry()
@@ -105,58 +120,114 @@ func runWorkflow(t *testing.T, wfPath string, timeoutSec int) *aether.WorkflowEx
 		},
 	)
 
+	var err error
 	eng, err = aether.New(
 		aether.WithStore(memStore),
 		aether.WithIDGenerator(NewAtomicIDGen()),
 		aether.WithExprEvaluator(NewSimpleEvaluator()),
 		aether.WithTaskBroker(brok),
 		aether.WithExecutorRegistry(reg),
-		aether.WithTimeoutWatcher(newPollingWatcher(memStore, 500*time.Millisecond)),
+		aether.WithTimeoutWatcher(newPollingWatcher(memStore, interval)),
 	)
 	if err != nil {
 		t.Fatalf("create engine: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
-	defer cancel()
-
-	if err := eng.Start(ctx); err != nil {
-		t.Fatalf("start engine: %v", err)
+	return &engineBundle{
+		eng:      eng,
+		memStore: memStore,
+		brok:     brok,
+		finishCh: finishCh,
+		cancel:   cancel,
+		ctx:      ctx,
 	}
-	defer eng.Stop()
+}
 
-	runID, err := eng.Submit(ctx, &wf)
-	if err != nil {
-		t.Fatalf("submit workflow: %v", err)
-	}
-
+// waitTerminal polls until the workflow reaches a terminal phase or ctx expires.
+func waitTerminal(t *testing.T, b *engineBundle, runID string) *aether.WorkflowExecution {
+	t.Helper()
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-
-	var finalExec *aether.WorkflowExecution
-loop:
 	for {
-		exec, getErr := eng.Get(ctx, runID)
-		if getErr != nil {
-			t.Fatalf("get workflow: %v", getErr)
+		exec, err := b.eng.Get(b.ctx, runID)
+		if err != nil {
+			t.Fatalf("get workflow: %v", err)
 		}
 		if exec.Phase().IsTerminal() {
-			finalExec = exec
-			break loop
+			return exec
 		}
 		select {
-		case <-ctx.Done():
-			finalExec = exec
-			break loop
-		case <-finishCh:
-			for len(finishCh) > 0 {
-				<-finishCh
+		case <-b.ctx.Done():
+			return exec
+		case <-b.finishCh:
+			for len(b.finishCh) > 0 {
+				<-b.finishCh
 			}
 		case <-ticker.C:
 		}
 	}
+}
 
-	return finalExec
+// waitTaskPhase polls until the named task reaches the expected phase or ctx expires.
+// Returns the task's RunID so the caller can Resume it.
+func waitTaskPhase(t *testing.T, b *engineBundle, runID string, taskName string, wantPhase model.Phase) *store.TaskRun {
+	t.Helper()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(10 * time.Second)
+	for {
+		exec, err := b.eng.Get(b.ctx, runID)
+		if err != nil {
+			t.Fatalf("get workflow: %v", err)
+		}
+		for _, tr := range exec.Tasks {
+			if tr.TaskName == taskName && tr.Status != nil && *tr.Status == wantPhase {
+				return tr
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for task %q to reach phase %s", taskName, wantPhase)
+			return nil
+		case <-b.ctx.Done():
+			t.Fatalf("context done before task %q reached phase %s", taskName, wantPhase)
+			return nil
+		case <-b.finishCh:
+			for len(b.finishCh) > 0 {
+				<-b.finishCh
+			}
+		case <-ticker.C:
+		}
+	}
+}
+
+func runWorkflow(t *testing.T, wfPath string, timeoutSec int) *aether.WorkflowExecution {
+	t.Helper()
+
+	b := newEngineBundle(t, timeoutSec)
+	defer b.cancel()
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+
+	return waitTerminal(t, b, runID)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +348,10 @@ func TestIntegration(t *testing.T) {
 				t.Fatalf("parse assertion %s: %v", assertPath, err)
 			}
 
+			if assert.SkipIntegration {
+				t.Skipf("skipped: requires dedicated test (suspend/resume or other special orchestration)")
+			}
+
 			exec := runWorkflow(t, wfPath, 30)
 			assertExecution(t, exec, &assert)
 
@@ -297,5 +372,208 @@ func TestIntegration(t *testing.T) {
 					task.TaskName, phase, strings.Join(outParts, ", "))
 			}
 		})
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestAwaitSuspend — dedicated test for the suspend/resume pattern.
+//
+// Workflow: prepare → await-approval (suspend=true) → finalize
+//
+// Steps:
+//  1. Submit workflow; "prepare" runs and completes.
+//  2. "await-approval" task starts and immediately suspends (PhaseRunning).
+//  3. Test calls eng.Resume() injecting {approver: "test-user", __resumed: true}.
+//  4. "await-approval" wakes up, detects __resumed marker, completes normally.
+//  5. "finalize" runs and the workflow reaches Succeeded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestAwaitSuspend(t *testing.T) {
+	const wfPath = "examples/11-await-suspend.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	b := newEngineBundle(t, 30)
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+	t.Logf("submitted runID=%s", runID)
+
+	// Step 1: wait for "await-approval" to reach PhaseRunning (suspended).
+	suspendedTask := waitTaskPhase(t, b, runID, "await-approval", model.PhaseRunning)
+	t.Logf("task %q suspended, taskRunID=%s", suspendedTask.TaskName, suspendedTask.RunID)
+
+	// Step 2: resume with approver payload + __resumed marker.
+	resumePayload := map[string]any{
+		"approver":    "test-user",
+		resumedMarker: true,
+	}
+	if err := b.eng.Resume(b.ctx, runID, suspendedTask.RunID, resumePayload); err != nil {
+		t.Fatalf("resume task: %v", err)
+	}
+	t.Logf("resume sent")
+
+	// Step 3: wait for workflow to complete.
+	finalExec := waitTerminal(t, b, runID)
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+
+	// Build assertion matching expected outcomes.
+	// Note: resume payload keys (approver, __resumed) are echoed back as inputs.
+	// The echo executor merges config outputs on top of echoed inputs, so:
+	//   - "approved" comes from config outputs (value: true)
+	//   - "approver" comes from the resume payload echoed as input
+	taskCount := 4
+	assertion := &WorkflowAssertion{
+		ExpectPhase:     "Succeeded",
+		ExpectTaskCount: &taskCount,
+		ExpectTasks: []TaskAssertion{
+			{
+				TaskName:    "prepare",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "status", Value: json.RawMessage(`"ready"`)},
+				},
+			},
+			{
+				TaskName:    "await-approval",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "approved", Value: json.RawMessage(`true`)},
+					{Name: "approver", Value: json.RawMessage(`"test-user"`)},
+				},
+			},
+			{
+				TaskName:    "finalize",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "result", Value: json.RawMessage(`"done"`)},
+				},
+			},
+		},
+	}
+	assertExecution(t, finalExec, assertion)
+
+	// Log all task outputs for visibility.
+	for _, task := range finalExec.Tasks {
+		phase := model.Phase("")
+		if task.Status != nil {
+			phase = *task.Status
+		}
+		var outParts []string
+		if task.Outputs != nil {
+			for _, p := range task.Outputs.Parameters {
+				outParts = append(outParts, fmt.Sprintf("%s=%s", p.Name, string(p.Value)))
+			}
+		}
+		t.Logf("  task=%-30s phase=%-12s outputs=[%s]",
+			task.TaskName, phase, strings.Join(outParts, ", "))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestTaskTimeout — dedicated test for task-level timeout + continueOn.timeout.
+//
+// Workflow: prepare → wait-external (suspend=true, timeout=1s, continueOn.timeout=true) → finalize
+//
+// Steps:
+//  1. Submit workflow; "prepare" completes.
+//  2. "wait-external" suspends and is never resumed — it times out after 1s.
+//  3. continueOn.timeout=true allows the DAG to continue.
+//  4. "finalize" runs and the workflow reaches Succeeded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestTaskTimeout(t *testing.T) {
+	const wfPath = "examples/12-task-timeout.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	// Use a fast watcher interval (100ms) so the 1s task timeout is detected promptly.
+	b := newEngineBundle(t, 30, 100*time.Millisecond)
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+	t.Logf("submitted runID=%s", runID)
+
+	// Wait for "wait-external" to enter PhaseRunning (suspended).
+	_ = waitTaskPhase(t, b, runID, "wait-external", model.PhaseRunning)
+	t.Logf("task wait-external suspended; waiting for timeout (~1s)...")
+
+	// Do NOT resume — let the task timeout naturally.
+	finalExec := waitTerminal(t, b, runID)
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+
+	// The workflow ends in Error because wait-external timed out.
+	// continueOn.timeout=true only allows downstream tasks to continue;
+	// it does not change the DAG container's own terminal phase.
+	taskCount := 4
+	assertion := &WorkflowAssertion{
+		ExpectPhase:     "Error",
+		ExpectTaskCount: &taskCount,
+		ExpectTasks: []TaskAssertion{
+			{
+				TaskName:    "prepare",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "status", Value: json.RawMessage(`"ready"`)},
+				},
+			},
+			{
+				TaskName:    "wait-external",
+				ExpectPhase: "Timeout",
+			},
+			{
+				TaskName:    "finalize",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "result", Value: json.RawMessage(`"completed-after-timeout"`)},
+				},
+			},
+		},
+	}
+	assertExecution(t, finalExec, assertion)
+
+	for _, task := range finalExec.Tasks {
+		phase := model.Phase("")
+		if task.Status != nil {
+			phase = *task.Status
+		}
+		var outParts []string
+		if task.Outputs != nil {
+			for _, p := range task.Outputs.Parameters {
+				outParts = append(outParts, fmt.Sprintf("%s=%s", p.Name, string(p.Value)))
+			}
+		}
+		t.Logf("  task=%-30s phase=%-12s outputs=[%s]",
+			task.TaskName, phase, strings.Join(outParts, ", "))
 	}
 }
