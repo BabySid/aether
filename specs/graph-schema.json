@@ -535,26 +535,12 @@
             "properties": {
                 "type": {
                     "type": "string",
-                    "enum": [
-                        "script",
-                        "function",
-                        "await"
-                    ],
-                    "description": "Executor type. Engine routes to the corresponding executor pool based on type + resources"
+                    "description": "The logical name of the executor plugin that handles this task. The executor registry resolves the plugin by this name at dispatch time. The value space is open and extensible."
                 },
                 "config": {
-                    "oneOf": [
-                        {
-                            "$ref": "#/definitions/scriptConfig"
-                        },
-                        {
-                            "$ref": "#/definitions/functionConfig"
-                        },
-                        {
-                            "$ref": "#/definitions/awaitConfig"
-                        }
-                    ],
-                    "description": "Executor configuration"
+                    "type": "object",
+                    "description": "Executor-specific configuration. The accepted fields are determined by the executor type.",
+                    "additionalProperties": true
                 }
             },
             "required": [
@@ -1094,52 +1080,11 @@
                 "hooks": {
                     "$ref": "#/definitions/hooks",
                     "description": "Workflow lifecycle hooks"
-                },
-                "workflowTemplateRef": {
-                    "$ref": "#/definitions/workflowTemplateRef",
-                    "description": "Reference to an external WorkflowTemplate; mutually exclusive with entrypoint+templates"
-                }
-            },
-            "oneOf": [
-                {
-                    "required": [
-                        "entrypoint",
-                        "templates"
-                    ],
-                    "not": {
-                        "required": [
-                            "workflowTemplateRef"
-                        ]
-                    }
-                },
-                {
-                    "required": [
-                        "workflowTemplateRef"
-                    ],
-                    "not": {
-                        "required": [
-                            "entrypoint",
-                            "templates"
-                        ]
-                    }
-                }
-            ],
-            "additionalProperties": false
-        },
-        "workflowTemplateRef": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Referenced WorkflowTemplate name"
-                },
-                "namespace": {
-                    "type": "string",
-                    "description": "Namespace of the WorkflowTemplate; defaults to the current workflow's namespace when omitted"
                 }
             },
             "required": [
-                "name"
+                "entrypoint",
+                "templates"
             ],
             "additionalProperties": false
         },
@@ -1211,7 +1156,7 @@
             "properties": {
                 "apiVersion": {
                     "type": "string",
-                    "const": "graph/v1",
+                    "const": "aether/v1",
                     "description": "API version"
                 },
                 "kind": {
@@ -1243,7 +1188,7 @@
             "properties": {
                 "apiVersion": {
                     "type": "string",
-                    "const": "graph/v1",
+                    "const": "aether/v1",
                     "description": "API version"
                 },
                 "kind": {
@@ -1258,38 +1203,6 @@
                 "spec": {
                     "$ref": "#/definitions/cronWorkflowSpec",
                     "description": "CronWorkflow spec"
-                }
-            },
-            "required": [
-                "apiVersion",
-                "kind",
-                "metadata",
-                "spec"
-            ],
-            "additionalProperties": false
-        },
-        {
-            "type": "object",
-            "title": "WorkflowTemplate",
-            "description": "Reusable workflow template that can be referenced by Workflow via workflowTemplateRef",
-            "properties": {
-                "apiVersion": {
-                    "type": "string",
-                    "const": "graph/v1",
-                    "description": "API version"
-                },
-                "kind": {
-                    "type": "string",
-                    "const": "WorkflowTemplate",
-                    "description": "Resource type"
-                },
-                "metadata": {
-                    "$ref": "#/definitions/metadata",
-                    "description": "Metadata"
-                },
-                "spec": {
-                    "$ref": "#/definitions/workflowSpec",
-                    "description": "WorkflowTemplate spec"
                 }
             },
             "required": [
