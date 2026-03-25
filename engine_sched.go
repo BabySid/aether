@@ -11,6 +11,24 @@ import (
 	"github.com/BabySid/aether/store"
 )
 
+// computeMetricsFinish fills FinishedAt and Duration from the current wall clock
+// and an optional StartedAt timestamp already stored in existing.
+func computeMetricsFinish(existing *model.Metrics) *model.Metrics {
+	finishedAt := time.Now().UTC()
+	finishedAtStr := finishedAt.Format(time.RFC3339)
+	m := &model.Metrics{FinishedAt: finishedAtStr}
+	if existing != nil {
+		m.StartedAt = existing.StartedAt
+		m.Retries = existing.Retries
+		if existing.StartedAt != "" {
+			if startedAt, err := time.Parse(time.RFC3339, existing.StartedAt); err == nil {
+				m.Duration = finishedAt.Sub(startedAt).Round(time.Millisecond).String()
+			}
+		}
+	}
+	return m
+}
+
 // advanceScope is the core iterative scheduling function.
 // It processes the scope identified by startParentRunID, then walks up the scope
 // tree until the workflow is finalized or a scope is still in progress.
@@ -212,12 +230,15 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 			}
 		}
 
+		containerMetrics := computeMetricsFinish(tr.Metrics)
+
 		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   tr.RunID,
 			Token:   tr.Token,
 			Status:  &phase,
 			Message: &msg,
 			Outputs: containerOutputs,
+			Metrics: containerMetrics,
 		})
 		if err != nil {
 			// Token mismatch: another advanceScope already finalized this container — stop here.
@@ -372,11 +393,27 @@ func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID string, top
 	if wfRun.Status == nil || *wfRun.Status != model.PhaseRunning {
 		return
 	}
+	// Compute FinishedAt/Duration from the StartedAt recorded at workflow start.
+	wfMetrics := computeMetricsFinish(wfRun.Metrics)
+
+	// Collect workflow-level outputs from the entrypoint DAG container.
+	// topLevelRuns contains the single entrypoint container (e.g. main DAG).
+	// Its resolved Outputs (populated by advanceScope) become the workflow outputs.
+	var wfOutputs *model.Outputs
+	for _, tr := range topLevelRuns {
+		if tr.Outputs != nil && len(tr.Outputs.Parameters) > 0 {
+			wfOutputs = tr.Outputs
+			break
+		}
+	}
+
 	_, err = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
 		RunID:   wfRun.RunID,
 		Token:   wfRun.Token,
 		Status:  &phase,
 		Message: &msg,
+		Metrics: wfMetrics,
+		Outputs: wfOutputs,
 	})
 	if err != nil {
 		// Token mismatch: already finalized by another path — stop.
