@@ -359,7 +359,8 @@
         "phase": {
             "type": "string",
             "enum": [
-                "Pending",
+                "Created",
+                "Ready",
                 "Running",
                 "Succeeded",
                 "Failed",
@@ -368,7 +369,7 @@
                 "Timeout",
                 "Cancelled"
             ],
-            "description": "Execution phase: Pending (awaiting), Running, Succeeded, Failed (business failure), Error (system error), Skipped (when-condition false), Timeout, Cancelled (user/operator terminated via Cancel API)"
+            "description": "Execution phase: Created (persisted, not yet claimed), Ready (engine committed to execute), Running (worker confirmed start), Succeeded, Failed (business failure), Error (system error), Skipped (when-condition false), Timeout, Cancelled (user/operator terminated via Cancel API)"
         },
         "metrics": {
             "type": "object",

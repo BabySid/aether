@@ -41,8 +41,10 @@ func phaseClass(p model.Phase) string {
 		return "ph-skipped"
 	case model.PhaseRunning:
 		return "ph-running"
-	case model.PhasePending:
-		return "ph-pending"
+	case model.PhaseReady:
+		return "ph-ready"
+	case model.PhaseCreated:
+		return "ph-created"
 	default:
 		return "ph-unknown"
 	}
@@ -443,8 +445,10 @@ function renderWfTable(snap, prevWfIdx) {
 function fmtParams(params) {
   if (!params || params.length === 0) return '<span style="color:#cbd5e0">—</span>';
   return params.map(function(p) {
-    var full = p.value !== undefined && p.value !== null ? String(p.value) : '';
-    var disp = full.length > 40 ? full.slice(0,40) + '…' : full;
+    var raw = p.value;
+    var full = raw === undefined || raw === null ? '' :
+               (typeof raw === 'object' ? JSON.stringify(raw) : String(raw));
+    var disp = full.length > 60 ? full.slice(0,60) + '…' : full;
     var titleAttr = full.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     return '<span title="' + titleAttr + '"><b>' + esc(p.name) + '</b>=' + esc(disp) + '</span>';
   }).join('<br>');

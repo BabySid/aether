@@ -138,7 +138,7 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, 
 	}
 
 	// 3. Zero iterations: mark the loop as succeeded immediately.
-	// The loop is still Pending at this point (never dispatched a leaf task),
+	// The loop is still Created at this point (never dispatched a leaf task),
 	// so we update it directly without a token guard — no concurrent writer can
 	// have transitioned it yet.
 	if len(iterations) == 0 {
@@ -153,7 +153,7 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, 
 		return err
 	}
 
-	// 4. Create one child TaskRun per iteration (Pending, ParentRunID = loopTR.RunID).
+	// 4. Create one child TaskRun per iteration (Created, ParentRunID = loopTR.RunID).
 	// When concurrency is set, only the first min(concurrency, total) iterations are
 	// created now. As each completes, trySpawnNextIterations refills the active slot.
 	// Iteration parameters are serialised into TaskRun.Inputs so that dispatchLeafTask
@@ -209,7 +209,7 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID string,
 	bodyTemplateType := internal.ResolveTemplateType(bodyTmpl)
 
 	iterScope := fmt.Sprintf("%s.loop[%d]/", loopTR.TaskName, iterIndex)
-	pendingPhase := model.PhasePending
+	pendingPhase := model.PhaseCreated
 	iterRun := &store.TaskRun{
 		RunID:         e.idGen.Generate(),
 		WorkflowRunID: workflowRunID,
@@ -300,7 +300,7 @@ func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID string,
 	return true, nil
 }
 
-// createIterationRun creates a single Pending child TaskRun for one iteration of an
+// createIterationRun creates a single Created child TaskRun for one iteration of an
 // items/itemsFrom loop.
 //
 // Called by startLoopController (initial batch) and trySpawnNextIterations (concurrency
@@ -322,7 +322,7 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, l
 		iterInputs = &model.Inputs{Parameters: params}
 	}
 
-	iterPending := model.PhasePending
+	iterPending := model.PhaseCreated
 	iterRun := &store.TaskRun{
 		RunID:         e.idGen.Generate(),
 		WorkflowRunID: workflowRunID,
@@ -442,7 +442,7 @@ func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID strin
 	}
 
 	if spawned {
-		// Activate the freshly-created Pending iterations.
+		// Activate the freshly-created iterations (Created state).
 		if err := e.advanceScope(ctx, workflowRunID, wf, parentTR.RunID); err != nil {
 			return false, err
 		}

@@ -35,6 +35,7 @@
                                 "type": "echo",
                                 "config": {
                                     "suspend": true,
+                                    "autoResumeAfter": "1s",
                                     "outputs": [
                                         {
                                             "name": "approved",

@@ -4,7 +4,7 @@
     "metadata": {
         "name": "dag-retry",
         "annotations": {
-            "description": "Task-level retry: flaky-task has retry.limit=2; first attempt succeeds (echo never fails; validates retry config is parsed)",
+            "description": "Task-level retry: flaky-task fails on the first 2 attempts (failCount=2) then succeeds on the 3rd. retry.limit=3 + expression covers Failed phase.",
             "test:expect-phase": "Succeeded",
             "test:expect-task-phase": "main=Succeeded,flaky=Succeeded"
         }
@@ -18,7 +18,11 @@
                     "tasks": [
                         {
                             "name": "flaky",
-                            "template": "flaky-task"
+                            "template": "flaky-task",
+                            "retry": {
+                                "limit": 3,
+                                "expression": "tasks.flaky.phase != 'Succeeded'"
+                            }
                         }
                     ]
                 }
@@ -26,19 +30,13 @@
             {
                 "task": {
                     "name": "flaky-task",
-                    "retry": {
-                        "limit": 2,
-                        "backoff": {
-                            "duration": "100ms",
-                            "factor": 2
-                        }
-                    },
                     "executor": {
                         "type": "echo",
                         "config": {
+                            "failCount": 2,
                             "outputs": [
                                 {"name": "status",  "type": "string", "value": "ok"},
-                                {"name": "attempt", "type": "int",    "value": 1}
+                                {"name": "attempt", "type": "int",    "value": 3}
                             ]
                         }
                     },

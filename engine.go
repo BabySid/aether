@@ -102,7 +102,7 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (string, error)
 
 	// 7. Generate workflow run ID and persist WorkflowRun
 	workflowRunID := e.idGen.Generate()
-	pendingPhase := model.PhasePending
+	pendingPhase := model.PhaseCreated
 	run := &store.WorkflowRun{
 		RunID:    workflowRunID,
 		Workflow: rawJSON,
@@ -119,8 +119,8 @@ func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (string, error)
 		return "", fmt.Errorf("aether: create workflow run: %w", err)
 	}
 
-	// 8. Create entry TaskRun (Pending, ParentRunID="" for top-level scope)
-	entryPending := model.PhasePending
+	// 8. Create entry TaskRun (Created, ParentRunID="" for top-level scope)
+	entryPending := model.PhaseCreated
 	entryTaskRun := &store.TaskRun{
 		RunID:         e.idGen.Generate(),
 		WorkflowRunID: workflowRunID,
@@ -270,7 +270,7 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 	// Using PhaseCancelled keeps Error semantics clean (system failures only) and
 	// prevents the retry policy from re-scheduling cancelled tasks.
 	//
-	// Pending tasks: transition directly to PhaseCancelled via Get+Update.
+	// Created/Ready tasks: transition directly to PhaseCancelled via Get+Update.
 	// They have not started yet, so no broker signal is needed.
 	// Previously these were set to PhaseSkipped, but Skipped means "when-condition
 	// evaluated to false" — a different semantic from user-initiated cancellation.
@@ -289,7 +289,7 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 				Status:  &cancelled,
 				Message: &cancelMsg,
 			})
-		case model.PhasePending:
+		case model.PhaseCreated, model.PhaseReady:
 			_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
 				RunID:   tr.RunID,
 				Token:   tr.Token,
@@ -322,7 +322,7 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 
 // OnTaskStarted is invoked when a worker begins executing a task.
 // It transitions the leaf task itself, its ancestor containers (DAG/Loop), and
-// the WorkflowRun from Pending to Running, so that their Running state accurately
+// the WorkflowRun from Ready to Running, so that their Running state accurately
 // reflects the moment real work begins rather than the moment the task was dispatched.
 //
 // Both the leaf task transition and the ancestor walk use Get+Update with Token to
@@ -332,9 +332,9 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID string) {
 	if err != nil {
 		return
 	}
-	// 1. Transition the leaf task itself: Pending → Running (idempotent via Token).
+	// 1. Transition the leaf task itself: Ready → Running (idempotent via Token).
 	// Also record StartedAt in Metrics — the engine is the authoritative Metrics writer.
-	if tr.Status != nil && *tr.Status == model.PhasePending {
+	if tr.Status != nil && *tr.Status == model.PhaseReady {
 		running := model.PhaseRunning
 		empty := ""
 		startedAt := time.Now().UTC().Format(time.RFC3339)
@@ -346,7 +346,7 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID string) {
 			Metrics: &model.Metrics{StartedAt: startedAt},
 		})
 	}
-	// 2. Transition ancestor containers (DAG/Loop) and the WorkflowRun: Pending → Running.
+	// 2. Transition ancestor containers (DAG/Loop) and the WorkflowRun: Ready → Running.
 	_ = e.markAncestorsRunning(ctx, tr.WorkflowRunID, tr.ParentRunID)
 }
 
@@ -457,9 +457,9 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 		}
 
 		if needRetry {
-			// tr.Status is still Running and Token is valid — reset directly to Pending.
+			// tr.Status is still Running and Token is valid — reset directly to Created.
 			// Skip metrics, outputs, hooks and advanceScope — the task is not done yet.
-			pending := model.PhasePending
+			pending := model.PhaseCreated
 			emptyMsg := ""
 			newCount := 1
 			if tr.RetryCount != nil {

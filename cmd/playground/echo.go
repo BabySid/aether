@@ -13,10 +13,23 @@
 // task. On the resumed call the executor detects the "__resumed" marker in
 // inputs, skips the suspend gate, and completes normally.
 //
+// To make the suspend/resume flow observable in a single CLI run without
+// external tooling, set config.autoResumeAfter to a duration string (e.g.
+// "1s"). LocalBroker detects ExecCodeSuspended and, if autoResumeAfter is
+// set, spawns a goroutine that calls eng.Resume() after the specified delay,
+// injecting {"__resumed": true} as the resume payload. This lets the workflow
+// proceed automatically while still exercising the full suspend → resume path.
+//
+// It also supports a "failCount" mode: when config.failCount=N the executor
+// returns ExecCodeFailed on the first N calls (retryCount < failCount), then
+// succeeds on the (N+1)-th attempt. This makes retry behaviour observable
+// without an external failure source.
+//
 // On execution:
 //  1. All input parameters are printed to the log.
 //  2. If suspend=true and not yet resumed → return ExecCodeSuspended.
-//  3. Outputs are built as a *mix* of inputs + declared outputs:
+//  3. If retryCount < failCount → return ExecCodeFailed (simulated failure).
+//  4. Outputs are built as a *mix* of inputs + declared outputs:
 //     - Inputs are echoed back first (excluding the __resumed marker).
 //     - Outputs defined in config are merged on top (override same-named inputs).
 //     - If an output entry carries no value, a zero-value for the declared type is used.
@@ -27,12 +40,9 @@
 //	  "type": "echo",
 //	  "config": {
 //	    "suspend": true,
+//	    "autoResumeAfter": "1s",
 //	    "outputs": [
-//	      {"name": "status",  "type": "string", "value": "ok"},
-//	      {"name": "count",   "type": "int",    "value": 42},
-//	      {"name": "success", "type": "bool",   "value": true},
-//	      {"name": "tags",    "type": "array",  "value": ["a","b","c"]},
-//	      {"name": "meta",    "type": "object", "value": {"key": "val"}}
+//	      {"name": "approved", "type": "bool", "value": true}
 //	    ]
 //	  }
 //	}
@@ -72,8 +82,18 @@ type echoConfig struct {
 	// Suspend, when true, causes the executor to return ExecCodeSuspended on the
 	// first invocation. The task moves to PhaseRunning (awaiting external resume).
 	// Call eng.Resume() with payload {"__resumed": true} to unblock the task.
-	Suspend bool         `json:"suspend,omitempty"`
-	Outputs []echoOutput `json:"outputs"`
+	Suspend bool `json:"suspend,omitempty"`
+	// AutoResumeAfter, when non-empty, causes LocalBroker to automatically call
+	// eng.Resume() after the specified duration (e.g. "1s") whenever the executor
+	// returns ExecCodeSuspended. The resume payload is {"__resumed": true}.
+	// This field is playground-only: it makes suspend/resume observable in a
+	// single CLI run without needing an external resume trigger.
+	AutoResumeAfter string `json:"autoResumeAfter,omitempty"`
+	// FailCount, when > 0, causes the executor to return ExecCodeFailed on the
+	// first FailCount attempts (retryCount < FailCount). The task will succeed
+	// on the (FailCount+1)-th attempt. Use with retry.limit >= FailCount.
+	FailCount int          `json:"failCount,omitempty"`
+	Outputs   []echoOutput `json:"outputs"`
 }
 
 // resumedMarker is the input parameter name injected by the test/caller via
@@ -187,6 +207,18 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 		return &model.ExecOutputs{
 			Code:    model.ExecCodeSuspended,
 			Message: "suspended; awaiting external resume signal",
+		}, nil
+	}
+
+	// ── Step 2c: failCount gate ──────────────────────────────────────────────
+	// Simulate failures for the first cfg.FailCount attempts so retry paths
+	// are observable without an external failure source.
+	if cfg.FailCount > 0 && req.RetryCount < cfg.FailCount {
+		log.Printf("[echo] taskRunID=%s taskName=%s  simulated failure (attempt %d of %d, failCount=%d)",
+			req.TaskRunID, req.TaskName, req.RetryCount+1, cfg.FailCount+1, cfg.FailCount)
+		return &model.ExecOutputs{
+			Code:    model.ExecCodeFailed,
+			Message: fmt.Sprintf("simulated failure on attempt %d (failCount=%d)", req.RetryCount+1, cfg.FailCount),
 		}, nil
 	}
 

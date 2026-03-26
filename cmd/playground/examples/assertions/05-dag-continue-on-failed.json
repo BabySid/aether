@@ -13,17 +13,7 @@
     },
     {
       "taskName": "step-b",
-      "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "code",
-          "value": 2
-        },
-        {
-          "name": "reason",
-          "value": "intentional failure"
-        }
-      ]
+      "expectPhase": "Failed"
     },
     {
       "taskName": "step-c",
@@ -34,6 +24,10 @@
           "value": "ok"
         }
       ]
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded"
     }
   ]
 }

@@ -196,7 +196,7 @@ func isDependencySatisfied(depStatus model.Phase, depTaskCO, dagCO *model.Contin
 		return true
 	}
 
-	co := mergeContinueOn(depTaskCO, dagCO)
+	co := MergeContinueOn(depTaskCO, dagCO)
 	if co == nil {
 		return false
 	}
@@ -213,9 +213,9 @@ func isDependencySatisfied(depStatus model.Phase, depTaskCO, dagCO *model.Contin
 	}
 }
 
-// mergeContinueOn merges task-level and DAG-level continueOn policies.
+// MergeContinueOn merges task-level and DAG-level continueOn policies.
 // Task-level fields take precedence; DAG-level is the fallback.
-func mergeContinueOn(taskCO, dagCO *model.ContinueOn) *model.ContinueOn {
+func MergeContinueOn(taskCO, dagCO *model.ContinueOn) *model.ContinueOn {
 	if taskCO == nil && dagCO == nil {
 		return nil
 	}
@@ -337,6 +337,10 @@ func BuildTaskAssignment(workflowRunID string, tr *store.TaskRun, taskDecl *mode
 		return nil, fmt.Errorf("task definition %q has no executor: cannot build assignment for task %q", taskDecl.Name, tr.TaskName)
 	}
 
+	retryCount := 0
+	if tr.RetryCount != nil {
+		retryCount = *tr.RetryCount
+	}
 	assignment := &broker.TaskAssignment{
 		TaskRunID:      tr.RunID,
 		WorkflowRunID:  workflowRunID,
@@ -345,6 +349,7 @@ func BuildTaskAssignment(workflowRunID string, tr *store.TaskRun, taskDecl *mode
 		Priority:       wf.Spec.Priority,
 		ExecutorType:   exec.Type,
 		ExecutorConfig: exec.Config,
+		RetryCount:     retryCount,
 	}
 
 	// Timeout: callSite-level overrides definition-level (taskCall may be nil)

@@ -34,3 +34,5 @@ go.work.sum
 specs/todo.md
 specs/design-spec.md
 cmd/playground/playground
+cmd/playground/out.html
+playground

@@ -4,7 +4,7 @@
     "metadata": {
         "name": "dag-continue-on-failed",
         "annotations": {
-            "description": "DAG continueOn.failed: step-b fails but DAG succeeds due to continueOn, step-c still runs",
+            "description": "continueOn.failed on step-b: step-b fails, step-c still runs because step-b declares continueOn; DAG succeeds due to DAG-level continueOn",
             "test:expect-phase": "Succeeded",
             "test:expect-task-phase": "main=Succeeded,step-a=Succeeded,step-b=Failed,step-c=Succeeded"
         }
@@ -24,13 +24,13 @@
                         {
                             "name": "step-b",
                             "template": "task-fail",
-                            "dependencies": ["step-a"]
+                            "dependencies": ["step-a"],
+                            "continueOn": {"failed": true}
                         },
                         {
                             "name": "step-c",
                             "template": "task-ok",
-                            "dependencies": ["step-b"],
-                            "continueOn": {"failed": true}
+                            "dependencies": ["step-b"]
                         }
                     ]
                 }
@@ -57,17 +57,8 @@
                     "executor": {
                         "type": "echo",
                         "config": {
-                            "outputs": [
-                                {"name": "code",   "type": "int",    "value": 2},
-                                {"name": "reason", "type": "string", "value": "intentional failure"}
-                            ]
+                            "failCount": 1
                         }
-                    },
-                    "outputs": {
-                        "parameters": [
-                            {"name": "code",   "type": "int"},
-                            {"name": "reason", "type": "string"}
-                        ]
                     }
                 }
             }

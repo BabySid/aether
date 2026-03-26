@@ -23,6 +23,16 @@
                             {"name": "filename", "value": "{{iterator.item}}"},
                             {"name": "index",    "value": "{{iterator.index}}"}
                         ]
+                    },
+                    "aggregate": {
+                        "strategy": "list",
+                        "parameters": ["status", "rows"]
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "status", "type": "array"},
+                            {"name": "rows",   "type": "array"}
+                        ]
                     }
                 }
             },

@@ -11,8 +11,9 @@ import (
 	"github.com/BabySid/aether/store"
 )
 
-// createReadyTasks finds DAG tasks whose dependencies are all satisfied and no
-// TaskRun exists yet, then creates and activates TaskRuns for them.
+// createEligibleTasks finds DAG tasks whose dependencies are all satisfied and no
+// TaskRun exists yet, then creates TaskRuns (in PhaseCreated) for them so
+// advanceScope can activate them in the next iteration.
 //
 // The function loops instead of recursing: when tasks are skipped (their "when"
 // condition evaluated to false), the loop refreshes siblings and re-evaluates
@@ -42,7 +43,7 @@ import (
 // After B is skipped, C's dependency on B is satisfied. The loop refreshes
 // siblings and re-evaluates so C gets created without waiting for the next
 // external event.
-func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID string, wf *model.Workflow, parentTR *store.TaskRun, siblings []*store.TaskRun) error {
+func (e *Engine) createEligibleTasks(ctx context.Context, workflowRunID string, wf *model.Workflow, parentTR *store.TaskRun, siblings []*store.TaskRun) error {
 	// parentTR is passed in by the caller (advanceScope already has it); no extra GetTaskRun needed.
 	parentRunID := parentTR.RunID
 	tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
@@ -110,7 +111,7 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID string, wf 
 			}
 		}
 
-		// Create Pending TaskRuns for tasks that should execute, then activate immediately.
+		// Create Created TaskRuns for tasks that should execute, then activate immediately.
 		for _, task := range toExecute {
 			taskTmpl := internal.FindTemplate(wf, task.Template)
 			templateType := ""
@@ -120,7 +121,7 @@ func (e *Engine) createReadyTasks(ctx context.Context, workflowRunID string, wf 
 				// Inline executor on the DAG task node — treat as a leaf task.
 				templateType = model.TemplateTypeTask
 			}
-			pendingPhase := model.PhasePending
+			pendingPhase := model.PhaseCreated
 			newRun := &store.TaskRun{
 				RunID:         e.idGen.Generate(),
 				WorkflowRunID: workflowRunID,
@@ -257,9 +258,17 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 		}
 	}
 
-	// Step 4: Persist resolved inputs + deadline in a single UpdateTaskRun call before
-	// dispatching. Writing the Deadline here (before Dispatch) ensures the timeout
-	// watchdog can detect it even if the Broker/Executor crashes right after Dispatch.
+	// Step 4: Atomically transition the leaf task from Created → Ready, persisting
+	// resolved inputs and deadline in the same write.
+	//
+	// This serves as a dispatch-claim guard: if two concurrent advanceScope calls
+	// both see this task as Created (e.g. one from trySpawnNextIterations and one
+	// from a sibling's completion), only the first UpdateTaskRun wins (token check);
+	// the second sees a mismatch and returns nil without re-dispatching.
+	//
+	// Writing the Deadline here (before Broker.Dispatch) also ensures the timeout
+	// watchdog can detect it even if the broker goroutine crashes immediately after.
+	ready := model.PhaseReady
 	var updateInputs *model.Inputs
 	if assignment.Inputs != nil {
 		updateInputs = assignment.Inputs
@@ -271,22 +280,27 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 			updateDeadline = &dl
 		}
 	}
-	if updateInputs != nil || updateDeadline != nil {
-		updated, _ := e.store.UpdateTaskRun(ctx, &store.TaskRun{
-			RunID:    tr.RunID,
-			Token:    tr.Token,
-			Inputs:   updateInputs,
-			Deadline: updateDeadline,
-		})
-		// Use the returned token for any subsequent writes; fall back to original tr if update failed.
-		if updated != nil {
-			tr = updated
-		}
+	updated, claimErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		RunID:    tr.RunID,
+		Token:    tr.Token,
+		Status:   &ready,
+		Inputs:   updateInputs,
+		Deadline: updateDeadline,
+	})
+	if claimErr != nil {
+		// Token mismatch: another advanceScope path already claimed and dispatched this task.
+		return nil
+	}
+	tr = updated
+
+	// Step 5: Mark ancestor containers and the WorkflowRun as Ready now that a leaf task
+	// has been committed for dispatch. They will transition to Running when OnTaskStarted fires.
+	if err := e.markAncestorsReady(ctx, tr.WorkflowRunID, tr.ParentRunID); err != nil {
+		return err
 	}
 
-	// Step 5: Dispatch the fully-resolved assignment to the task broker for execution.
-	// Ancestor containers (DAG/Loop) and the WorkflowRun will transition from Pending
-	// to Running via OnTaskStarted, which is called by the broker/worker when execution
-	// actually begins — not here at dispatch time.
+	// Step 6: Dispatch the fully-resolved assignment to the task broker for execution.
+	// Ancestor containers and the WorkflowRun will transition from Ready to Running
+	// via OnTaskStarted, which is called by the broker/worker when execution actually begins.
 	return e.taskBroker.Dispatch(ctx, assignment)
 }

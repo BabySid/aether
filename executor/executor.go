@@ -42,9 +42,10 @@ type ExecuteRequest struct {
 	Config json.RawMessage
 
 	// Runtime inputs and constraints.
-	Inputs    *model.Inputs
-	Resources *model.Resources
-	Timeout   string // e.g. "30m"; empty means no deadline beyond ctx
+	Inputs     *model.Inputs
+	Resources  *model.Resources
+	Timeout    string // e.g. "30m"; empty means no deadline beyond ctx
+	RetryCount int    // number of retries already consumed (0 = first attempt)
 }
 
 // Registry manages registered executor plugins, routing by Type().

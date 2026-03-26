@@ -61,11 +61,11 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 			return err
 		}
 
-		// 2. Activate any Pending TaskRuns in this scope.
-		// Containers (DAG/Loop) transition to Running and recurse into their child scope.
+		// 2. Activate any Created TaskRuns in this scope.
+		// Containers (DAG/Loop) open their child scope; leaf tasks are claimed Ready and dispatched.
 		// Leaf tasks (type=task) are dispatched to the Broker directly.
 		for _, sib := range siblings {
-			if sib.Status != nil && *sib.Status == model.PhasePending {
+			if sib.Status != nil && *sib.Status == model.PhaseCreated {
 				if err := e.activateTaskRun(ctx, workflowRunID, wf, sib); err != nil {
 					return err
 				}
@@ -78,13 +78,13 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 		//
 		// Example — DAG "main": fetch → notify → alert
 		//   advanceScope is called after "fetch" completes (Succeeded).
-		//   At step 2, siblings=[fetch:Succeeded], no Pending tasks to activate.
-		//   Step 3 calls createReadyTasks:
-		//     - "notify" depends on "fetch" → fetch is terminal → notify is ready → CreateTaskRun(notify,Pending)
-		//     - "alert"  depends on "notify" → notify not yet terminal → not ready yet
+		//   At step 2, siblings=[fetch:Succeeded], no Created tasks to activate.
+		//   Step 3 calls createEligibleTasks:
+		//     - "notify" depends on "fetch" → fetch is terminal → notify is eligible → CreateTaskRun(notify,Created)
+		//     - "alert"  depends on "notify" → notify not yet terminal → not eligible yet
 		//   After step 3: siblings=[fetch:Succeeded] (stale — notify was just added to the store)
 		// 3. Fetch the parent container once (if this is a non-root scope) so that
-		// createReadyTasks can skip its own GetTaskRun, and Step 6 can reuse the same
+		// createEligibleTasks can skip its own GetTaskRun, and Step 6 can reuse the same
 		// value without a second round-trip to the store.
 		var currentParentTR *store.TaskRun
 		if parentRunID != "" {
@@ -93,18 +93,18 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 			if fetchErr != nil {
 				return fetchErr
 			}
-			if err := e.createReadyTasks(ctx, workflowRunID, wf, currentParentTR, siblings); err != nil {
+			if err := e.createEligibleTasks(ctx, workflowRunID, wf, currentParentTR, siblings); err != nil {
 				return err
 			}
 		}
 
-		// 4. Re-read siblings after createReadyTasks, which may have added new TaskRuns
-		// (newly ready tasks) or changed statuses (skipped tasks).
+		// 4. Re-read siblings after createEligibleTasks, which may have added new TaskRuns
+		// (newly eligible tasks) or changed statuses (skipped tasks).
 		//
 		// Continuing the example above:
 		//   Before re-read: siblings=[fetch:Succeeded]           ← stale, misses "notify"
-		//   After  re-read: siblings=[fetch:Succeeded, notify:Pending]  ← fresh
-		//   The loop's next iteration (step 2) will then activate notify:Pending → dispatch it.
+		//   After  re-read: siblings=[fetch:Succeeded, notify:Created]  ← fresh
+		//   The loop's next iteration (step 2) will then activate notify:Created → dispatch it.
 		siblings, err = e.store.ListTaskRunsByParent(ctx, workflowRunID, parentRunID)
 		if err != nil {
 			return err
@@ -117,7 +117,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 		//   advanceScope(parentRunID="") is called when "main" (DAG container) becomes Succeeded.
 		//   siblings=[main:Succeeded] → allTerminal=true → finalizeWorkflow sets WF to Succeeded.
 		//
-		//   If "main" is still Running (some tasks inside are pending):
+		//   If "main" is still Running (some tasks inside are not yet terminal):
 		//   siblings=[main:Running] → allTerminal=false → return nil (wait for next event).
 		if parentRunID == "" {
 			if allTerminal(siblings) {
@@ -143,7 +143,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 		parentTR := currentParentTR
 
 		if parentTR.TemplateType == model.TemplateTypeLoop {
-			// Concurrency refill: spawn pending iterations to fill free slots, even if
+			// Concurrency refill: spawn Created iterations to fill free slots, even if
 			// other iterations are still running. This must happen before allTerminal check
 			// so that iter[N] is created immediately when iter[0] finishes, not deferred
 			// until all others are also done.
@@ -180,7 +180,28 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 		// Aggregate children's results into the parent container's phase and walk up.
 		// Use Get + UpdateTaskRun(Running → terminal) guarded by Token to prevent
 		// concurrent advanceScope calls from double-finalizing the container.
-		phase, msg := aggregatePhase(siblings)
+		//
+		// For DAG containers, aggregation is continueOn-aware: child tasks that
+		// failed/errored/timed-out but whose phase is "tolerated" by their merged
+		// continueOn policy (task-level OR dag-level fallback) are treated as
+		// non-failures for the purpose of the parent DAG's phase.
+		//
+		// Loop containers use plain aggregatePhase: iterations are independent and
+		// have no dependency graph, so continueOn has no aggregation semantics there.
+		// (If a loop body is itself a DAG with continueOn, its internal aggregation
+		// already produces the correct phase before the loop sees it.)
+		var phase model.Phase
+		var msg string
+		if parentTR.TemplateType == model.TemplateTypeDAG {
+			tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+			var dag *model.DAG
+			if tmpl != nil {
+				dag = tmpl.DAG
+			}
+			phase, msg = aggregatePhaseDAG(siblings, dag)
+		} else {
+			phase, msg = aggregatePhase(siblings)
+		}
 		tr, err := e.store.GetTaskRun(ctx, parentTR.RunID)
 		if err != nil {
 			return err
@@ -190,11 +211,12 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 			return nil
 		}
 
-		// For DAG containers, resolve dag.outputs.parameters valueFrom references
-		// using children's outputs. This populates the DAG container's Outputs so
-		// downstream tasks and the workflow itself can reference them.
+		// For DAG/Loop containers, collect container-level outputs so downstream tasks
+		// and the workflow itself can reference them via valueFrom.
 		var containerOutputs *model.Outputs
-		if parentTR.TemplateType == model.TemplateTypeDAG {
+		switch parentTR.TemplateType {
+		case model.TemplateTypeDAG:
+			// Resolve dag.outputs.parameters valueFrom references from children.
 			tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
 			if tmpl != nil && tmpl.DAG != nil && tmpl.DAG.Outputs != nil {
 				env := binding.NewEnvBuilder().
@@ -207,6 +229,29 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 					containerOutputs = &model.Outputs{
 						Phase:       phase,
 						ExecOutputs: model.ExecOutputs{Parameters: collected.Parameters},
+					}
+				}
+			}
+		case model.TemplateTypeLoop:
+			// Aggregate loop iteration outputs according to the loop's aggregate strategy.
+			tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+			if tmpl != nil && tmpl.Loop != nil {
+				results := make([]internal.LoopIterationResult, 0, len(siblings))
+				for i, sib := range siblings {
+					r := internal.LoopIterationResult{Index: i, Outputs: sib.Outputs}
+					if sib.Status != nil {
+						r.Phase = *sib.Status
+					}
+					if sib.Message != nil {
+						r.Message = *sib.Message
+					}
+					results = append(results, r)
+				}
+				_, _, aggregated := internal.AggregateResults(results, tmpl.Loop.Aggregate)
+				if aggregated != nil {
+					containerOutputs = &model.Outputs{
+						Phase:       phase,
+						ExecOutputs: model.ExecOutputs{Parameters: aggregated.Parameters},
 					}
 				}
 			}
@@ -232,30 +277,29 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 	}
 }
 
-// activateTaskRun transitions a Pending TaskRun to its active state based on TemplateType.
+// activateTaskRun transitions a Created TaskRun to its active state based on TemplateType.
 //
 // The three template types have fundamentally different activation paths:
 //
-//   - DAG (container): stays Pending and opens a child scope via advanceScope.
-//     It transitions to Running only when its first leaf task is dispatched
-//     (markAncestorsRunning walks up the chain at that point).
+//   - DAG (container): stays Created and opens a child scope via advanceScope.
+//     It transitions to Ready/Running only when its first leaf task is dispatched
+//     (markAncestorsReady + markAncestorsRunning walk up the chain at that point).
 //     DAG itself never reaches a Broker — it's done when all its children are terminal.
 //
-//   - Task (leaf): dispatched directly to the Broker for execution.
-//     The Broker runs the executor and calls back OnTaskCompleted when done.
-//     Status transitions to Running inside the Broker/Executor, not here.
+//   - Task (leaf): claimed as Ready (Created → Ready via token guard) then dispatched
+//     to the Broker for execution. Status transitions to Running when OnTaskStarted fires.
 //
-//   - Loop (container): stays Pending and starts a loop controller.
-//     It transitions to Running only when its first iteration task is dispatched
-//     (markAncestorsRunning walks up the chain at that point).
+//   - Loop (container): stays Created and starts a loop controller.
+//     It transitions to Ready/Running only when its first iteration task is dispatched
+//     (markAncestorsReady + markAncestorsRunning walk up the chain at that point).
 //     The controller is responsible for expanding items / evaluating repeatCondition
 //     and spawning iteration TaskRuns.
 func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID string, wf *model.Workflow, tr *store.TaskRun) error {
 	switch tr.TemplateType {
 	case model.TemplateTypeDAG:
-		// DAG stays Pending here. It will transition to Running when its first
-		// leaf task is dispatched (via markAncestorsRunning in dispatchLeafTask).
-		// The parent scope's allTerminal check is unaffected because Pending is
+		// DAG stays Created here. It will transition to Ready/Running when its first
+		// leaf task is dispatched (via markAncestorsReady + markAncestorsRunning in dispatchLeafTask).
+		// The parent scope's allTerminal check is unaffected because Created is
 		// not a terminal state per Phase.IsTerminal().
 		//
 		// tr.RunID becomes the startParentRunID for the child scope.
@@ -267,9 +311,9 @@ func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID string, wf *
 		return e.dispatchLeafTask(ctx, workflowRunID, wf, tr)
 
 	case model.TemplateTypeLoop:
-		// Loop stays Pending here, mirroring the DAG behaviour.
-		// It transitions to Running only when its first iteration task is dispatched
-		// (markAncestorsRunning walks up the chain at that point).
+		// Loop stays Created here, mirroring the DAG behaviour.
+		// It transitions to Ready/Running only when its first iteration task is dispatched
+		// (markAncestorsReady + markAncestorsRunning walk up the chain at that point).
 		//
 		// Resolve call-site arguments into loop inputs before starting the controller
 		// so that startLoopController can build the EvalEnv with WithResolvedInputs and
@@ -297,14 +341,66 @@ func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID string, wf *
 	}
 }
 
-// markAncestorsRunning walks up the ParentRunID chain starting from parentRunID,
-// transitioning every Pending ancestor TaskRun to Running.
-// Once the chain reaches the root (parentRunID=0), it also promotes the
-// WorkflowRun from Pending to Running if it hasn't been already.
+// markAncestorsReady walks up the ParentRunID chain starting from parentRunID,
+// transitioning every Created ancestor container TaskRun to Ready.
+// Once the chain reaches the root (parentRunID=""), it also promotes the
+// WorkflowRun from Created to Ready.
 //
-// This is called immediately after a leaf task is dispatched so that the semantic
-// "Running" state of DAG containers and the WorkflowRun accurately reflects the
-// moment real work begins, rather than the moment a container node was activated.
+// Called from dispatchLeafTask immediately after the leaf task transitions
+// Created → Ready, so ancestor containers reflect "at least one child leaf
+// has been committed for dispatch" before the broker goroutine starts.
+func (e *Engine) markAncestorsReady(ctx context.Context, workflowRunID string, parentRunID string) error {
+	for parentRunID != "" {
+		ancestor, err := e.store.GetTaskRun(ctx, parentRunID)
+		if err != nil {
+			return err
+		}
+		// Only transition Created → Ready. If already Ready/Running/terminal, stop walking.
+		if ancestor.Status == nil || *ancestor.Status != model.PhaseCreated {
+			break
+		}
+		ready := model.PhaseReady
+		empty := ""
+		_, err = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			RunID:   ancestor.RunID,
+			Token:   ancestor.Token,
+			Status:  &ready,
+			Message: &empty,
+		})
+		if err != nil {
+			// Token mismatch: another goroutine already transitioned this ancestor — stop walking.
+			break
+		}
+		parentRunID = ancestor.ParentRunID
+	}
+
+	// Promote the WorkflowRun from Created to Ready.
+	wfRun, err := e.store.GetWorkflowRun(ctx, workflowRunID)
+	if err != nil {
+		return err
+	}
+	if wfRun.Status == nil || *wfRun.Status != model.PhaseCreated {
+		return nil
+	}
+	ready := model.PhaseReady
+	empty := ""
+	_, err = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+		RunID:   wfRun.RunID,
+		Token:   wfRun.Token,
+		Status:  &ready,
+		Message: &empty,
+	})
+	_ = err
+	return nil
+}
+
+// markAncestorsRunning walks up the ParentRunID chain starting from parentRunID,
+// transitioning every Ready ancestor TaskRun to Running and recording StartedAt.
+// Once the chain reaches the root (parentRunID=""), it also promotes the
+// WorkflowRun from Ready to Running if it hasn't been already.
+//
+// Called from OnTaskStarted when a leaf task transitions Ready → Running,
+// so container ancestors and the WorkflowRun reflect the moment real execution begins.
 func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string, parentRunID string) error {
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 
@@ -313,9 +409,8 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string,
 		if err != nil {
 			return err
 		}
-		// Only transition Pending → Running. If already Running or terminal, stop walking —
-		// all further ancestors are also already Running or terminal.
-		if ancestor.Status == nil || *ancestor.Status != model.PhasePending {
+		// Only transition Ready → Running. If already Running or terminal, stop walking.
+		if ancestor.Status == nil || *ancestor.Status != model.PhaseReady {
 			break
 		}
 		running := model.PhaseRunning
@@ -334,12 +429,12 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string,
 		parentRunID = ancestor.ParentRunID
 	}
 
-	// Promote the WorkflowRun from Pending to Running (idempotent via Token).
+	// Promote the WorkflowRun from Ready to Running (idempotent via Token).
 	wfRun, err := e.store.GetWorkflowRun(ctx, workflowRunID)
 	if err != nil {
 		return err
 	}
-	if wfRun.Status == nil || *wfRun.Status != model.PhasePending {
+	if wfRun.Status == nil || *wfRun.Status != model.PhaseReady {
 		return nil
 	}
 	running := model.PhaseRunning
@@ -430,6 +525,83 @@ func aggregatePhase(taskRuns []*store.TaskRun) (model.Phase, string) {
 			hasError = true
 		case model.PhaseFailed:
 			hasFailure = true
+		}
+	}
+
+	switch {
+	case hasCancelled:
+		return model.PhaseCancelled, "one or more tasks were cancelled"
+	case hasError:
+		return model.PhaseError, "one or more tasks errored"
+	case hasFailure:
+		return model.PhaseFailed, "one or more tasks failed"
+	default:
+		return model.PhaseSucceeded, ""
+	}
+}
+
+// aggregatePhaseDAG is like aggregatePhase but respects the DAG's continueOn policy.
+//
+// Each child TaskRun is matched against its call-site task node in the DAG to
+// obtain a merged continueOn (task-level takes precedence over DAG-level default).
+// If a child's terminal phase is "tolerated" by its merged continueOn, it is treated
+// as a non-failure for the purpose of determining the parent DAG's aggregated phase.
+//
+// Example: step-b has continueOn.failed=true and ends in Failed.
+//   - Without this function: DAG phase = Failed (step-b's failure propagates).
+//   - With this function:    DAG phase = Succeeded (step-b's failure is tolerated).
+//
+// Cancelled tasks are never tolerated — cancellation always propagates.
+func aggregatePhaseDAG(taskRuns []*store.TaskRun, dag *model.DAG) (model.Phase, string) {
+	if dag == nil {
+		// Fallback: no DAG definition, use plain aggregation.
+		return aggregatePhase(taskRuns)
+	}
+
+	// Build a quick-lookup map: taskName → call-site Task node for continueOn access.
+	taskNodeByName := make(map[string]*model.Task, len(dag.Tasks))
+	for i := range dag.Tasks {
+		taskNodeByName[dag.Tasks[i].Name] = &dag.Tasks[i]
+	}
+
+	hasCancelled := false
+	hasError := false
+	hasFailure := false
+
+	for _, tr := range taskRuns {
+		if tr.Status == nil {
+			continue
+		}
+		phase := *tr.Status
+		switch phase {
+		case model.PhaseCancelled:
+			// Cancellation always propagates regardless of continueOn.
+			hasCancelled = true
+		case model.PhaseError, model.PhaseTimeout, model.PhaseFailed:
+			// Check whether this task's merged continueOn tolerates this phase.
+			var taskCO *model.ContinueOn
+			if node, ok := taskNodeByName[tr.TaskName]; ok {
+				taskCO = node.ContinueOn
+			}
+			co := internal.MergeContinueOn(taskCO, dag.ContinueOn)
+			tolerated := false
+			if co != nil {
+				switch phase {
+				case model.PhaseFailed:
+					tolerated = co.Failed
+				case model.PhaseError:
+					tolerated = co.Error
+				case model.PhaseTimeout:
+					tolerated = co.Timeout
+				}
+			}
+			if !tolerated {
+				if phase == model.PhaseFailed {
+					hasFailure = true
+				} else {
+					hasError = true
+				}
+			}
 		}
 	}
 

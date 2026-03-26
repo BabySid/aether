@@ -79,6 +79,12 @@ func main() {
 			}
 		},
 	)
+	// Wire auto-resume: allows echo tasks with autoResumeAfter to call
+	// eng.Resume() automatically after a delay, demonstrating suspend/resume
+	// in a single CLI run without external tooling.
+	brok.SetResumeFunc(func(ctx context.Context, workflowRunID, taskRunID string, payload map[string]any) error {
+		return eng.Resume(ctx, workflowRunID, taskRunID, payload)
+	})
 
 	eng, err = aether.New(
 		aether.WithStore(memStore),

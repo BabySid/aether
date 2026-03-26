@@ -532,12 +532,13 @@ func TestTaskTimeout(t *testing.T) {
 	finalExec := waitTerminal(t, b, runID)
 	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
 
-	// The workflow ends in Error because wait-external timed out.
-	// continueOn.timeout=true only allows downstream tasks to continue;
-	// it does not change the DAG container's own terminal phase.
+	// The workflow ends in Succeeded: wait-external timed out (Timeout) but its
+	// continueOn.timeout=true means the timeout is tolerated by the DAG aggregation.
+	// finalize runs after wait-external because continueOn.timeout allows scheduling,
+	// and the DAG phase is Succeeded because the Timeout is tolerated in aggregation.
 	taskCount := 4
 	assertion := &WorkflowAssertion{
-		ExpectPhase:     "Error",
+		ExpectPhase:     "Succeeded",
 		ExpectTaskCount: &taskCount,
 		ExpectTasks: []TaskAssertion{
 			{

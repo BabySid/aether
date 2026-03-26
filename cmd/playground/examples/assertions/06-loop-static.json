@@ -15,6 +15,20 @@
           "value": 100
         }
       ]
+    },
+    {
+      "taskName": "run-loop",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {
+          "name": "status",
+          "value": ["done", "done", "done"]
+        },
+        {
+          "name": "rows",
+          "value": [100, 100, 100]
+        }
+      ]
     }
   ]
 }

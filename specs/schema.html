@@ -419,8 +419,9 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
     </div>
 
     <div class="type-card" id="Phase">
-      <span class="tn">Phase</span> <span class="kw">=</span> <span class="v">"Pending"</span> <span class="c"># awaiting scheduling</span>
-      <span class="line"><span class="v">| "Running"</span> <span class="c"># executing</span></span>
+      <span class="tn">Phase</span> <span class="kw">=</span> <span class="v">"Created"</span> <span class="c"># persisted in store, engine not yet committed</span>
+      <span class="line"><span class="v">| "Ready"</span> <span class="c"># engine committed to execute (leaf dispatched / container scope opened)</span></span>
+      <span class="line"><span class="v">| "Running"</span> <span class="c"># worker confirmed start (OnTaskStarted fired)</span></span>
       <span class="line"><span class="v">| "Succeeded"</span> <span class="c"># success</span></span>
       <span class="line"><span class="v">| "Failed"</span> <span class="c"># business failure (executor returned Failed)</span></span>
       <span class="line"><span class="v">| "Error"</span> <span class="c"># system/infrastructure error</span></span>

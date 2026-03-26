@@ -15,6 +15,13 @@
             {
                 "dag": {
                     "name": "pipeline",
+                    "outputs": {
+                        "parameters": [
+                            {"name": "avg",   "type": "int",  "valueFrom": {"parameter": "tasks.summarize.outputs.parameters.avg"}},
+                            {"name": "total", "type": "int",  "valueFrom": {"parameter": "tasks.summarize.outputs.parameters.total"}},
+                            {"name": "ok",    "type": "bool", "valueFrom": {"parameter": "tasks.summarize.outputs.parameters.ok"}}
+                        ]
+                    },
                     "tasks": [
                         {
                             "name": "batch",

@@ -99,6 +99,7 @@ type TaskAssignment struct {
 	Timeout        string           // e.g. "30m"
 	Resources      *model.Resources // resource requirements (nil if none)
 	Priority       int
+	RetryCount     int // number of retries already consumed (0 = first attempt)
 }
 
 // TaskResult holds the result of a completed task execution.
