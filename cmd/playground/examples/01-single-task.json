@@ -26,20 +26,21 @@
                                 "name": "username",
                                 "type": "string",
                                 "valueFrom": {"parameter": "workflow.arguments.parameters.username"}
+                            },
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "message", "type": "string", "value": "Hello, Alice!"},
+                                    {"name": "code",    "type": "int",    "value": 200},
+                                    {"name": "ok",      "type": "bool",   "value": true},
+                                    {"name": "tags",    "type": "array",  "value": ["greet", "demo"]},
+                                    {"name": "meta",    "type": "object", "value": {"version": "1.0", "env": "test"}}
+                                ]
                             }
                         ]
                     },
                     "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "message", "type": "string", "value": "Hello, Alice!"},
-                                {"name": "code",    "type": "int",    "value": 200},
-                                {"name": "ok",      "type": "bool",   "value": true},
-                                {"name": "tags",    "type": "array",  "value": ["greet", "demo"]},
-                                {"name": "meta",    "type": "object", "value": {"version": "1.0", "env": "test"}}
-                            ]
-                        }
+                        "type": "echo"
                     },
                     "outputs": {
                         "parameters": [

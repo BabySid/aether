@@ -3,26 +3,42 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/BabySid/aether/model"
 )
 
-// Plugin defines a task executor implementation.
+// ExecutorSchema is the self-description of an executor plugin.
+// Best practice: use SchemaOf[ConfigStruct, OutputStruct]() to derive this
+// from Go struct types; avoid hand-writing field names as strings.
+type ExecutorSchema struct {
+	Type        string // matches Plugin.Type()
+	Version     string // schema version, e.g. "1.0"
+	Description string
+
+	// Inputs declares the accepted input parameters (derived from Config struct).
+	// Uses model.Inputs so field Name/Type/Description/Default/Enum are all available.
+	// nil = accepts any inputs (permissive mode).
+	Inputs *model.Inputs
+
+	// Outputs declares the fixed set of output parameters produced by this executor.
+	//   non-nil → static outputs: engine validates task.outputs fields at submit time
+	//             and auto-fills task.outputs when omitted.
+	//   nil → dynamic outputs: fields are determined at runtime.
+	//         Use executor.DynamicOutputs as O in SchemaOf[C, DynamicOutputs]().
+	Outputs *model.ExecOutputs
+}
+
+// Plugin is the executor plugin interface. All executor implementations must satisfy it.
 type Plugin interface {
-	// Type returns the executor type identifier (e.g. "script", "function", "await").
+	// Type returns the unique executor type identifier (e.g. "http", "shell").
 	Type() string
 
-	// Execute runs the task, blocking until completion or ctx cancellation.
-	// The returned *model.ExecOutputs carries the business data (Code, Message,
-	// Parameters, Artifacts). Phase is NOT set by the executor; the broker/engine
-	// layer is the single writer of Phase, derived from (error, ctx.Err(), Code):
-	//   ctx.Err() != nil         → PhaseTimeout
-	//   error != nil             → PhaseError
-	//   Code == ExecCodeSuspended → PhaseRunning  (await pattern)
-	//   Code == ExecCodeFailed    → PhaseFailed
-	//   Code == ExecCodeSucceeded → PhaseSucceeded
+	// Schema declares the executor's contract. Use SchemaOf[Config, Output]() to
+	// derive it from struct types rather than writing field names by hand.
+	Schema() ExecutorSchema
+
+	// Execute runs the task. Use OutputFrom for type-safe output construction.
 	Execute(ctx context.Context, req *ExecuteRequest) (*model.ExecOutputs, error)
 }
 
@@ -38,9 +54,6 @@ type ExecuteRequest struct {
 	TaskName      string
 	TemplateName  string
 
-	// Execution configuration — opaque to the framework, parsed by the plugin.
-	Config json.RawMessage
-
 	// Runtime inputs and constraints.
 	Inputs     *model.Inputs
 	Resources  *model.Resources
@@ -49,24 +62,29 @@ type ExecuteRequest struct {
 }
 
 // Registry manages registered executor plugins, routing by Type().
+// It also maintains a SchemaRegistry keyed by executor type.
 type Registry struct {
 	plugins map[string]Plugin
+	schemas map[string]ExecutorSchema
 }
 
 // NewRegistry creates an empty executor registry.
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]Plugin),
+		schemas: make(map[string]ExecutorSchema),
 	}
 }
 
 // Register adds an executor plugin. Returns an error if the type is already registered.
+// It also caches the plugin's Schema() result in the SchemaRegistry.
 func (r *Registry) Register(plugin Plugin) error {
 	t := plugin.Type()
 	if _, exists := r.plugins[t]; exists {
 		return fmt.Errorf("executor type %q already registered", t)
 	}
 	r.plugins[t] = plugin
+	r.schemas[t] = plugin.Schema()
 	return nil
 }
 
@@ -76,6 +94,12 @@ func (r *Registry) Get(executorType string) (Plugin, bool) {
 	return p, ok
 }
 
+// GetSchema returns the cached ExecutorSchema for the given executor type.
+func (r *Registry) GetSchema(executorType string) (ExecutorSchema, bool) {
+	s, ok := r.schemas[executorType]
+	return s, ok
+}
+
 // Types returns all registered executor type names.
 func (r *Registry) Types() []string {
 	types := make([]string, 0, len(r.plugins))
@@ -83,4 +107,13 @@ func (r *Registry) Types() []string {
 		types = append(types, t)
 	}
 	return types
+}
+
+// Schemas returns all cached ExecutorSchemas.
+func (r *Registry) Schemas() []ExecutorSchema {
+	schemas := make([]ExecutorSchema, 0, len(r.schemas))
+	for _, s := range r.schemas {
+		schemas = append(schemas, s)
+	}
+	return schemas
 }

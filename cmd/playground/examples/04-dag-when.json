@@ -38,14 +38,17 @@
             {
                 "task": {
                     "name": "status-check",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "status", "type": "string", "value": "ok"}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "ok"}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "status", "type": "string"}]
                     }
@@ -54,14 +57,17 @@
             {
                 "task": {
                     "name": "handle-ok",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "msg", "type": "string", "value": "ok path executed"}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "msg", "type": "string", "value": "ok path executed"}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "msg", "type": "string"}]
                     }
@@ -70,14 +76,17 @@
             {
                 "task": {
                     "name": "handle-fail",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "msg", "type": "string", "value": "fail path executed"}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "msg", "type": "string", "value": "fail path executed"}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "msg", "type": "string"}]
                     }

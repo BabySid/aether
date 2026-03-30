@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -31,8 +30,7 @@ func validWorkflow() *model.Workflow {
 					Task: &model.Task{
 						Name: "exec-a",
 						Executor: &model.Executor{
-							Type:   "script",
-							Config: json.RawMessage(`{"runtime":"bash","source":"echo hello"}`),
+							Type: "script",
 						},
 					},
 				},
@@ -474,8 +472,7 @@ func loopWorkflow(loop *model.Loop) *model.Workflow {
 					Task: &model.Task{
 						Name: "exec-a",
 						Executor: &model.Executor{
-							Type:   "function",
-							Config: json.RawMessage(`{"name":"handler"}`),
+							Type: "function",
 						},
 					},
 				},
@@ -771,8 +768,7 @@ func TestValidate_TemplateName_DNS1123(t *testing.T) {
 		Task: &model.Task{
 			Name: "Bad_Template",
 			Executor: &model.Executor{
-				Type:   "script",
-				Config: json.RawMessage(`{"runtime":"bash","source":"echo"}`),
+				Type: "script",
 			},
 		},
 	})

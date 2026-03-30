@@ -342,14 +342,13 @@ func BuildTaskAssignment(workflowRunID string, tr *store.TaskRun, taskDecl *mode
 		retryCount = *tr.RetryCount
 	}
 	assignment := &broker.TaskAssignment{
-		TaskRunID:      tr.RunID,
-		WorkflowRunID:  workflowRunID,
-		TaskName:       tr.TaskName,
-		TemplateName:   tr.TemplateName,
-		Priority:       wf.Spec.Priority,
-		ExecutorType:   exec.Type,
-		ExecutorConfig: exec.Config,
-		RetryCount:     retryCount,
+		TaskRunID:     tr.RunID,
+		WorkflowRunID: workflowRunID,
+		TaskName:      tr.TaskName,
+		TemplateName:  tr.TemplateName,
+		Priority:      wf.Spec.Priority,
+		ExecutorType:  exec.Type,
+		RetryCount:    retryCount,
 	}
 
 	// Timeout: callSite-level overrides definition-level (taskCall may be nil)

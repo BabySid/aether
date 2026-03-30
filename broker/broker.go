@@ -11,8 +11,8 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
 
+	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
 )
 
@@ -83,23 +83,31 @@ type CompletionHandler func(ctx context.Context, result *TaskResult)
 // TaskAssignment contains all information needed to execute a task.
 // "Fat assignment": workers do not need to query the Store.
 //
-// ExecutorConfig is kept as json.RawMessage because each executor type has its
-// own config schema; the broker/engine layer does not parse it.
 // Inputs and Resources use strong types: they follow a fixed schema known to the
 // framework, and using *model.Inputs / *model.Resources eliminates manual
 // marshal/unmarshal in every broker implementation.
 type TaskAssignment struct {
-	TaskRunID      string
-	WorkflowRunID  string
-	TaskName       string
-	TemplateName   string
-	ExecutorType   string           // "script" / "function" / "await"
-	ExecutorConfig json.RawMessage  // executor-specific config, opaque to broker/engine
-	Inputs         *model.Inputs    // resolved task inputs (nil if none)
-	Timeout        string           // e.g. "30m"
-	Resources      *model.Resources // resource requirements (nil if none)
-	Priority       int
-	RetryCount     int // number of retries already consumed (0 = first attempt)
+	TaskRunID     string
+	WorkflowRunID string
+	TaskName      string
+	TemplateName  string
+	ExecutorType  string           // executor type identifier, e.g. "echo", "http", "shell"
+	Inputs        *model.Inputs    // resolved task inputs (nil if none)
+	Timeout       string           // e.g. "30m"
+	Resources     *model.Resources // resource requirements (nil if none)
+	Priority      int
+	RetryCount    int // number of retries already consumed (0 = first attempt)
+}
+
+// WorkerRegistration is sent by a worker to the broker at startup.
+// It carries the worker's identity, the executor types it can handle,
+// and the full ExecutorSchema for each type so the master can populate
+// its SchemaRegistry without a separate round-trip.
+type WorkerRegistration struct {
+	WorkerID      string                    // unique worker instance id
+	ExecutorTypes []string                  // types this worker can handle
+	Schemas       []executor.ExecutorSchema // full schemas for each type
+	Tags          map[string]string         // optional routing labels
 }
 
 // TaskResult holds the result of a completed task execution.

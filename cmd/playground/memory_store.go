@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
@@ -70,6 +71,9 @@ type MemoryStore struct {
 	parentIndex  map[string][]*store.TaskRun
 	templates    map[string]*model.WorkflowTemplate
 
+	// schema store: key = execType+"::"+workerID
+	schemas map[string]store.SchemaRecord
+
 	// snapshot history
 	snapMu    sync.Mutex
 	snapshots []Snapshot
@@ -83,6 +87,7 @@ func NewMemoryStore() *MemoryStore {
 		taskIndex:    make(map[string][]*store.TaskRun),
 		parentIndex:  make(map[string][]*store.TaskRun),
 		templates:    make(map[string]*model.WorkflowTemplate),
+		schemas:      make(map[string]store.SchemaRecord),
 	}
 }
 
@@ -428,6 +433,39 @@ func (m *MemoryStore) GetWorkflowTemplate(_ context.Context, namespace, name str
 		return nil, fmt.Errorf("workflow template %s: %w", key, store.ErrNotFound)
 	}
 	return tmpl, nil
+}
+
+// --- SchemaStore ---
+
+func (m *MemoryStore) UpsertSchema(_ context.Context, workerID string, schema executor.ExecutorSchema) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := schema.Type + "::" + workerID
+	m.schemas[key] = store.SchemaRecord{WorkerID: workerID, Schema: schema}
+	return nil
+}
+
+func (m *MemoryStore) ListSchemas(_ context.Context) ([]store.SchemaRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]store.SchemaRecord, 0, len(m.schemas))
+	for _, r := range m.schemas {
+		result = append(result, r)
+	}
+	return result, nil
+}
+
+func (m *MemoryStore) DeleteSchema(_ context.Context, execType, workerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, r := range m.schemas {
+		typeMatch := execType == "" || r.Schema.Type == execType
+		workerMatch := workerID == "" || r.WorkerID == workerID
+		if typeMatch && workerMatch {
+			delete(m.schemas, key)
+		}
+	}
+	return nil
 }
 
 func (m *MemoryStore) taskExistsLocked(workflowRunID, parentRunID string, scope, taskName string) bool {

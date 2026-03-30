@@ -596,7 +596,7 @@ func TestBuildTaskAssignment_ExecutorInfo(t *testing.T) {
 	tr := &store.TaskRun{RunID: "1", TaskName: "t"}
 	taskDecl := &model.Task{
 		Name:     "t",
-		Executor: &model.Executor{Type: "function", Config: json.RawMessage(`{"fn":"main"}`)},
+		Executor: &model.Executor{Type: "function"},
 	}
 	wf := makeWorkflow(0)
 

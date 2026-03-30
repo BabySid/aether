@@ -72,14 +72,17 @@
             {
                 "task": {
                     "name": "inner-step-a",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "val", "type": "int", "value": 42}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "val", "type": "int", "value": 42}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "val", "type": "int"}]
                     }
@@ -89,16 +92,17 @@
                 "task": {
                     "name": "inner-step-b",
                     "inputs": {
-                        "parameters": [{"name": "val", "type": "int"}]
+                        "parameters": [
+                            {"name": "val", "type": "int"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "object", "value": {"val": 42, "doubled": 84}}
+                                ]
+                            }
+                        ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "result", "type": "object", "value": {"val": 42, "doubled": 84}}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "result", "type": "object"}]
                     }
@@ -108,16 +112,17 @@
                 "task": {
                     "name": "finalize",
                     "inputs": {
-                        "parameters": [{"name": "result", "type": "object"}]
+                        "parameters": [
+                            {"name": "result", "type": "object"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "done", "type": "bool", "value": true}
+                                ]
+                            }
+                        ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "done", "type": "bool", "value": true}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "done", "type": "bool"}]
                     }

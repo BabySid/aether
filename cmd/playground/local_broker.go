@@ -15,6 +15,19 @@ import (
 	"github.com/BabySid/aether/model"
 )
 
+// findInputParam returns the raw JSON value of the named parameter from inputs, or nil.
+func findInputParam(inputs *model.Inputs, name string) json.RawMessage {
+	if inputs == nil {
+		return nil
+	}
+	for _, p := range inputs.Parameters {
+		if p.Name == name {
+			return p.Value
+		}
+	}
+	return nil
+}
+
 // ResumeFunc is the callback used by LocalBroker to trigger an automatic
 // resume after a task returns ExecCodeSuspended with autoResumeAfter set.
 // It mirrors aether.Engine.Resume: (ctx, workflowRunID, taskID, payload).
@@ -97,7 +110,6 @@ func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssig
 			WorkflowRunID: assignment.WorkflowRunID,
 			TaskName:      assignment.TaskName,
 			TemplateName:  assignment.TemplateName,
-			Config:        assignment.ExecutorConfig,
 			Inputs:        assignment.Inputs,
 			Resources:     assignment.Resources,
 			Timeout:       assignment.Timeout,
@@ -144,17 +156,17 @@ func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssig
 			b.handler(ctx, taskResult)
 		}
 
-		// Auto-resume: if the executor returned Suspended and the config declares
+		// Auto-resume: if the executor returned Suspended and inputs contain
 		// autoResumeAfter, spawn a goroutine that calls resumeFn after the delay.
 		// This lets playground CLI demonstrate the full suspend→resume flow without
 		// requiring external tooling or interactive input.
 		if execOutputs != nil && execOutputs.Code == model.ExecCodeSuspended && b.resumeFn != nil {
-			var cfg echoConfig
-			if len(assignment.ExecutorConfig) > 0 {
-				_ = json.Unmarshal(assignment.ExecutorConfig, &cfg)
+			var autoResumeAfter string
+			if raw := findInputParam(assignment.Inputs, echoInputAutoResumeAfter); len(raw) > 0 {
+				_ = json.Unmarshal(raw, &autoResumeAfter)
 			}
-			if cfg.AutoResumeAfter != "" {
-				delay, parseErr := internal.ParseDuration(cfg.AutoResumeAfter)
+			if autoResumeAfter != "" {
+				delay, parseErr := internal.ParseDuration(autoResumeAfter)
 				if parseErr == nil && delay > 0 {
 					wfRunID := assignment.WorkflowRunID
 					taskRunID := assignment.TaskRunID

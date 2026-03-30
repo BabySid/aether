@@ -2,49 +2,28 @@
 //
 // # Design
 //
-// The echo executor supports an "outputs" config that declares the expected
+// The echo executor supports an "outputs" input that declares the expected
 // output parameters, each with an explicit type and optional value.
 // Supported types: int, bool, string, array, object.
 //
-// It also supports a "suspend" mode: when config.suspend=true the executor
-// returns ExecCodeSuspended on the first call, putting the task into
-// PhaseRunning (awaiting resume). The caller must invoke eng.Resume() with
-// a payload containing {"__resumed": true} (or any other key) to unblock the
-// task. On the resumed call the executor detects the "__resumed" marker in
-// inputs, skips the suspend gate, and completes normally.
+// All control parameters are passed as regular task inputs:
 //
-// To make the suspend/resume flow observable in a single CLI run without
-// external tooling, set config.autoResumeAfter to a duration string (e.g.
-// "1s"). LocalBroker detects ExecCodeSuspended and, if autoResumeAfter is
-// set, spawns a goroutine that calls eng.Resume() after the specified delay,
-// injecting {"__resumed": true} as the resume payload. This lets the workflow
-// proceed automatically while still exercising the full suspend → resume path.
-//
-// It also supports a "failCount" mode: when config.failCount=N the executor
-// returns ExecCodeFailed on the first N calls (retryCount < failCount), then
-// succeeds on the (N+1)-th attempt. This makes retry behaviour observable
-// without an external failure source.
-//
-// On execution:
-//  1. All input parameters are printed to the log.
-//  2. If suspend=true and not yet resumed → return ExecCodeSuspended.
-//  3. If retryCount < failCount → return ExecCodeFailed (simulated failure).
-//  4. Outputs are built as a *mix* of inputs + declared outputs:
-//     - Inputs are echoed back first (excluding the __resumed marker).
-//     - Outputs defined in config are merged on top (override same-named inputs).
-//     - If an output entry carries no value, a zero-value for the declared type is used.
+//   - suspend (bool): when true, returns ExecCodeSuspended on first call.
+//     Call eng.Resume() with {"__resumed": true} to unblock.
+//   - autoResumeAfter (string): duration (e.g. "1s"); LocalBroker auto-calls
+//     Resume() after the delay. Playground-only convenience.
+//   - failCount (int): return ExecCodeFailed on the first N attempts.
+//   - outputs (array): JSON array of {name, type, value?} output declarations.
 //
 // Workflow JSON example:
 //
-//	"executor": {
-//	  "type": "echo",
-//	  "config": {
-//	    "suspend": true,
-//	    "autoResumeAfter": "1s",
-//	    "outputs": [
-//	      {"name": "approved", "type": "bool", "value": true}
-//	    ]
-//	  }
+//	"executor": {"type": "echo"},
+//	"inputs": {
+//	  "parameters": [
+//	    {"name": "suspend",         "value": true},
+//	    {"name": "autoResumeAfter", "value": "1s"},
+//	    {"name": "outputs", "value": [{"name": "approved", "type": "bool", "value": true}]}
+//	  ]
 //	}
 package main
 
@@ -70,35 +49,24 @@ const (
 	capTypeObject echoCapabilityType = "object"
 )
 
-// echoOutput describes a single expected output parameter in the config.
+// echoOutput describes a single expected output parameter.
 type echoOutput struct {
 	Name  string             `json:"name"`
 	Type  echoCapabilityType `json:"type"`
 	Value json.RawMessage    `json:"value,omitempty"` // optional; falls back to zero-value
 }
 
-// echoConfig is the parsed form of the executor config block.
-type echoConfig struct {
-	// Suspend, when true, causes the executor to return ExecCodeSuspended on the
-	// first invocation. The task moves to PhaseRunning (awaiting external resume).
-	// Call eng.Resume() with payload {"__resumed": true} to unblock the task.
-	Suspend bool `json:"suspend,omitempty"`
-	// AutoResumeAfter, when non-empty, causes LocalBroker to automatically call
-	// eng.Resume() after the specified duration (e.g. "1s") whenever the executor
-	// returns ExecCodeSuspended. The resume payload is {"__resumed": true}.
-	// This field is playground-only: it makes suspend/resume observable in a
-	// single CLI run without needing an external resume trigger.
-	AutoResumeAfter string `json:"autoResumeAfter,omitempty"`
-	// FailCount, when > 0, causes the executor to return ExecCodeFailed on the
-	// first FailCount attempts (retryCount < FailCount). The task will succeed
-	// on the (FailCount+1)-th attempt. Use with retry.limit >= FailCount.
-	FailCount int          `json:"failCount,omitempty"`
-	Outputs   []echoOutput `json:"outputs"`
-}
-
 // resumedMarker is the input parameter name injected by the test/caller via
 // eng.Resume() to signal that this is a resumed (not first) execution.
 const resumedMarker = "__resumed"
+
+// echoInputParams are the well-known control inputs for the echo executor.
+const (
+	echoInputSuspend         = "suspend"
+	echoInputAutoResumeAfter = "auto-resume-after"
+	echoInputFailCount       = "fail-count"
+	echoInputOutputs         = "outputs"
+)
 
 // zeroValueFor returns the JSON zero-value for each supported type.
 func zeroValueFor(t echoCapabilityType) json.RawMessage {
@@ -156,25 +124,49 @@ func newEcho() *EchoExecutor { return &EchoExecutor{} }
 
 func (e *EchoExecutor) Type() string { return "echo" }
 
+// Schema: echo 的输出由 inputs.outputs 在运行时声明，使用 DynamicOutputs 哨兵。
+func (e *EchoExecutor) Schema() executor.ExecutorSchema {
+	return executor.SchemaOf[executor.DynamicOutputs, executor.DynamicOutputs](
+		"echo", "1.0", "Echoes inputs and produces declared outputs",
+	)
+}
+
 func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) (*model.ExecOutputs, error) {
-	// ── Step 1: echo all inputs, build base output map ──────────────────────
-	// Skip the __resumed marker from the visible output (it is an internal signal).
+	// ── Step 1: index inputs, build base output map ──────────────────────────
 	paramIdx := make(map[string]int) // name → index in params slice
 	var params []model.Parameter
 	resumed := false
 
+	// control values read from inputs
+	var suspend bool
+	var failCount int
+	var declaredOutputs []echoOutput
+
 	if req.Inputs != nil {
 		for _, p := range req.Inputs.Parameters {
-			if p.Name == resumedMarker {
+			switch p.Name {
+			case resumedMarker:
 				resumed = true
-				continue // do not include in outputs
+				continue // internal signal, do not echo
+			case echoInputSuspend:
+				_ = json.Unmarshal(p.Value, &suspend)
+				continue // control param, not echoed
+			case echoInputAutoResumeAfter:
+				continue // consumed by LocalBroker, not echoed
+			case echoInputFailCount:
+				_ = json.Unmarshal(p.Value, &failCount)
+				continue // control param, not echoed
+			case echoInputOutputs:
+				_ = json.Unmarshal(p.Value, &declaredOutputs)
+				continue // control param, not echoed
+			default:
+				paramIdx[p.Name] = len(params)
+				params = append(params, model.Parameter{
+					Name:  p.Name,
+					Type:  p.Type,
+					Value: p.Value,
+				})
 			}
-			paramIdx[p.Name] = len(params)
-			params = append(params, model.Parameter{
-				Name:  p.Name,
-				Type:  p.Type,
-				Value: p.Value,
-			})
 		}
 	}
 
@@ -192,16 +184,7 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 	}
 
 	// ── Step 2b: suspend gate ────────────────────────────────────────────────
-	// Parse config early so we can check the suspend flag before doing any work.
-	var cfg echoConfig
-	if len(req.Config) > 0 {
-		if err := json.Unmarshal(req.Config, &cfg); err != nil {
-			log.Printf("[echo] taskRunID=%s taskName=%s  WARNING: cannot parse config: %v",
-				req.TaskRunID, req.TaskName, err)
-		}
-	}
-
-	if cfg.Suspend && !resumed {
+	if suspend && !resumed {
 		log.Printf("[echo] taskRunID=%s taskName=%s  suspended — call Resume with {%q: true} to continue",
 			req.TaskRunID, req.TaskName, resumedMarker)
 		return &model.ExecOutputs{
@@ -211,62 +194,54 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 	}
 
 	// ── Step 2c: failCount gate ──────────────────────────────────────────────
-	// Simulate failures for the first cfg.FailCount attempts so retry paths
-	// are observable without an external failure source.
-	if cfg.FailCount > 0 && req.RetryCount < cfg.FailCount {
+	if failCount > 0 && req.RetryCount < failCount {
 		log.Printf("[echo] taskRunID=%s taskName=%s  simulated failure (attempt %d of %d, failCount=%d)",
-			req.TaskRunID, req.TaskName, req.RetryCount+1, cfg.FailCount+1, cfg.FailCount)
+			req.TaskRunID, req.TaskName, req.RetryCount+1, failCount+1, failCount)
 		return &model.ExecOutputs{
 			Code:    model.ExecCodeFailed,
-			Message: fmt.Sprintf("simulated failure on attempt %d (failCount=%d)", req.RetryCount+1, cfg.FailCount),
+			Message: fmt.Sprintf("simulated failure on attempt %d (failCount=%d)", req.RetryCount+1, failCount),
 		}, nil
 	}
 
-	// ── Step 3: parse declared outputs from config and merge ─────────────────
-	if len(req.Config) > 0 {
-		if err := json.Unmarshal(req.Config, &cfg); err != nil {
-			log.Printf("[echo] taskRunID=%s  WARNING: cannot parse config: %v", req.TaskRunID, err)
+	// ── Step 3: merge declared outputs ───────────────────────────────────────
+	for _, out := range declaredOutputs {
+		if out.Name == "" {
+			log.Printf("[echo] taskRunID=%s  WARNING: skipping output entry with empty name", req.TaskRunID)
+			continue
+		}
+
+		// Validate type
+		switch out.Type {
+		case capTypeInt, capTypeBool, capTypeString, capTypeArray, capTypeObject:
+			// valid
+		default:
+			log.Printf("[echo] taskRunID=%s  WARNING: output %q has unknown type %q, treating as string",
+				req.TaskRunID, out.Name, out.Type)
+			out.Type = capTypeString
+		}
+
+		// Validate value vs type
+		if msg := validateValue(out); msg != "" {
+			log.Printf("[echo] taskRunID=%s  WARNING: %s", req.TaskRunID, msg)
+		}
+
+		// Resolve final value: use provided or fall back to zero-value
+		val := out.Value
+		if len(val) == 0 {
+			val = zeroValueFor(out.Type)
+		}
+
+		// Merge: override if input already carries this name
+		if idx, exists := paramIdx[out.Name]; exists {
+			params[idx].Type = string(out.Type)
+			params[idx].Value = val
 		} else {
-			for _, out := range cfg.Outputs {
-				if out.Name == "" {
-					log.Printf("[echo] taskRunID=%s  WARNING: skipping output entry with empty name", req.TaskRunID)
-					continue
-				}
-
-				// Validate type
-				switch out.Type {
-				case capTypeInt, capTypeBool, capTypeString, capTypeArray, capTypeObject:
-					// valid
-				default:
-					log.Printf("[echo] taskRunID=%s  WARNING: output %q has unknown type %q, treating as string",
-						req.TaskRunID, out.Name, out.Type)
-					out.Type = capTypeString
-				}
-
-				// Validate value vs type
-				if msg := validateValue(out); msg != "" {
-					log.Printf("[echo] taskRunID=%s  WARNING: %s", req.TaskRunID, msg)
-				}
-
-				// Resolve final value: use provided or fall back to zero-value
-				val := out.Value
-				if len(val) == 0 {
-					val = zeroValueFor(out.Type)
-				}
-
-				// Merge: override if input already carries this name
-				if idx, exists := paramIdx[out.Name]; exists {
-					params[idx].Type = string(out.Type)
-					params[idx].Value = val
-				} else {
-					paramIdx[out.Name] = len(params)
-					params = append(params, model.Parameter{
-						Name:  out.Name,
-						Type:  string(out.Type),
-						Value: val,
-					})
-				}
-			}
+			paramIdx[out.Name] = len(params)
+			params = append(params, model.Parameter{
+				Name:  out.Name,
+				Type:  string(out.Type),
+				Value: val,
+			})
 		}
 	}
 

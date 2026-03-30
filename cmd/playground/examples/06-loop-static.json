@@ -21,7 +21,14 @@
                     "arguments": {
                         "parameters": [
                             {"name": "filename", "value": "{{iterator.item}}"},
-                            {"name": "index",    "value": "{{iterator.index}}"}
+                            {"name": "index",    "value": "{{iterator.index}}"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "done"},
+                                    {"name": "rows",   "type": "int",    "value": 100}
+                                ]
+                            }
                         ]
                     },
                     "aggregate": {
@@ -42,18 +49,17 @@
                     "inputs": {
                         "parameters": [
                             {"name": "filename", "type": "string"},
-                            {"name": "index",    "type": "int"}
+                            {"name": "index",    "type": "int"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "done"},
+                                    {"name": "rows",   "type": "int",    "value": 100}
+                                ]
+                            }
                         ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "status", "type": "string", "value": "done"},
-                                {"name": "rows",   "type": "int",    "value": 100}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [
                             {"name": "status", "type": "string"},

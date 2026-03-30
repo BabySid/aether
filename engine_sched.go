@@ -297,6 +297,22 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID string, wf *model.Workflow, tr *store.TaskRun) error {
 	switch tr.TemplateType {
 	case model.TemplateTypeDAG:
+		// Resolve call-site arguments into DAG inputs before entering the scope, so that
+		// child tasks can resolve "inputs.parameters.*" expressions via parentTR.Inputs.
+		// This mirrors the Loop path (resolveLoopInputs + UpdateTaskRun).
+		resolvedDAGInputs, err := e.resolveDAGInputs(ctx, workflowRunID, wf, tr)
+		if err != nil {
+			return fmt.Errorf("resolve dag inputs for %q: %w", tr.TaskName, err)
+		}
+		if resolvedDAGInputs != nil {
+			if updated, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
+				RunID:  tr.RunID,
+				Token:  tr.Token,
+				Inputs: resolvedDAGInputs,
+			}); updateErr == nil && updated != nil {
+				tr = updated
+			}
+		}
 		// DAG stays Created here. It will transition to Ready/Running when its first
 		// leaf task is dispatched (via markAncestorsReady + markAncestorsRunning in dispatchLeafTask).
 		// The parent scope's allTerminal check is unaffected because Created is

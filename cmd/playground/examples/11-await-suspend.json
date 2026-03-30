@@ -13,56 +13,49 @@
                     "tasks": [
                         {
                             "name": "prepare",
-                            "executor": {
-                                "type": "echo",
-                                "config": {
-                                    "outputs": [
-                                        {
-                                            "name": "status",
-                                            "type": "string",
-                                            "value": "ready"
-                                        }
-                                    ]
-                                }
-                            }
+                            "inputs": {
+                                "parameters": [
+                                    {
+                                        "name": "outputs",
+                                        "value": [
+                                            {"name": "status", "type": "string", "value": "ready"}
+                                        ]
+                                    }
+                                ]
+                            },
+                            "executor": {"type": "echo"}
                         },
                         {
                             "name": "await-approval",
-                            "dependencies": [
-                                "prepare"
-                            ],
-                            "executor": {
-                                "type": "echo",
-                                "config": {
-                                    "suspend": true,
-                                    "autoResumeAfter": "1s",
-                                    "outputs": [
-                                        {
-                                            "name": "approved",
-                                            "type": "bool",
-                                            "value": true
-                                        }
-                                    ]
-                                }
-                            }
+                            "dependencies": ["prepare"],
+                            "inputs": {
+                                "parameters": [
+                                    {"name": "suspend",           "value": true},
+                                    {"name": "auto-resume-after", "value": "1s"},
+                                    {
+                                        "name": "outputs",
+                                        "value": [
+                                            {"name": "approved", "type": "bool", "value": true}
+                                        ]
+                                    }
+                                ]
+                            },
+                            "executor": {"type": "echo"}
                         },
                         {
                             "name": "finalize",
-                            "dependencies": [
-                                "await-approval"
-                            ],
-                            "executor": {
-                                "type": "echo",
-                                "config": {
-                                    "outputs": [
-                                        {
-                                            "name": "result",
-                                            "type": "string",
-                                            "value": "done"
-                                        }
-                                    ]
-                                }
-                            }
+                            "dependencies": ["await-approval"],
+                            "inputs": {
+                                "parameters": [
+                                    {
+                                        "name": "outputs",
+                                        "value": [
+                                            {"name": "result", "type": "string", "value": "done"}
+                                        ]
+                                    }
+                                ]
+                            },
+                            "executor": {"type": "echo"}
                         }
                     ]
                 }

@@ -38,14 +38,17 @@
             {
                 "task": {
                     "name": "task-ok",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "status", "type": "string", "value": "ok"}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "ok"}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "status", "type": "string"}]
                     }
@@ -54,12 +57,12 @@
             {
                 "task": {
                     "name": "task-fail",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "failCount": 1
-                        }
-                    }
+                    "inputs": {
+                "parameters": [
+                    {"name": "fail-count", "value": 1}
+                ]
+            },
+                    "executor": {"type": "echo"}
                 }
             }
         ]

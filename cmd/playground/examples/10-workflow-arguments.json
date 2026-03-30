@@ -50,17 +50,16 @@
                             {"name": "batch-size", "type": "int"},
                             {"name": "dry-run",    "type": "bool"},
                             {"name": "tags",       "type": "array"},
-                            {"name": "config",     "type": "object"}
+                            {"name": "config",     "type": "object"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "ran", "type": "bool", "value": true}
+                                ]
+                            }
                         ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "ran", "type": "bool", "value": true}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "ran", "type": "bool"}]
                     }

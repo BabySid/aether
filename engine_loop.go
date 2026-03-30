@@ -163,7 +163,7 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, 
 		numToCreate = loop.Concurrency
 	}
 	for i := 0; i < numToCreate; i++ {
-		if err := e.createIterationRun(ctx, workflowRunID, loopTR, loop.Body, bodyTemplateType, i, iterations[i]); err != nil {
+		if err := e.createIterationRun(ctx, workflowRunID, loopTR, loop, loop.Body, bodyTemplateType, i, iterations[i]); err != nil {
 			return err
 		}
 	}
@@ -308,17 +308,49 @@ func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID string,
 // into TaskRun.Inputs so dispatchLeafTask can forward them to the broker verbatim without
 // re-running expression resolution.
 //
+// If the loop template has an Arguments block, each argument is resolved against the
+// current iteration env (which exposes iterator.item and iterator.index aliases) and
+// merged into the TaskRun.Inputs. This allows loop arguments to:
+//   - Map iteration values to body-template input names via {{iterator.item}} etc.
+//   - Pass static values (e.g. outputs declarations) through to body tasks.
+//
 // The Scope field is set to "<loopTaskName>.loop[<iterIndex>]/" for traceability.
-func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, loopTR *store.TaskRun, bodyName, bodyTemplateType string, iterIndex int, iterParams map[string]any) error {
+func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, loopTR *store.TaskRun, loop *model.Loop, bodyName, bodyTemplateType string, iterIndex int, iterParams map[string]any) error {
 	iterScope := fmt.Sprintf("%s.loop[%d]/", loopTR.TaskName, iterIndex)
 
-	var iterInputs *model.Inputs
-	if len(iterParams) > 0 {
-		params := make([]model.Parameter, 0, len(iterParams))
-		for k, v := range iterParams {
-			valJSON, _ := json.Marshal(v)
-			params = append(params, model.Parameter{Name: k, Value: valJSON})
+	// Build the iteration env: loop_iter.* keys + iterator.* aliases.
+	// The iterator.* aliases let loop arguments reference {{iterator.item}} and
+	// {{iterator.index}} in their value expressions, which is the user-facing syntax.
+	iterEnv := make(map[string]any, len(iterParams)+2)
+	for k, v := range iterParams {
+		iterEnv[k] = v
+	}
+	if item, ok := iterParams["loop_iter.item"]; ok {
+		iterEnv["iterator.item"] = item
+	}
+	if idx, ok := iterParams["loop_iter.index"]; ok {
+		iterEnv["iterator.index"] = idx
+	}
+
+	// Start with the raw iteration params (loop_iter.*).
+	params := make([]model.Parameter, 0, len(iterParams))
+	for k, v := range iterParams {
+		valJSON, _ := json.Marshal(v)
+		params = append(params, model.Parameter{Name: k, Value: valJSON})
+	}
+
+	// Resolve loop arguments and append to params.
+	// Arguments whose value is a {{...}} expression are interpolated against iterEnv.
+	// Static arguments (plain values, arrays, objects) are passed through unchanged.
+	if loop != nil && loop.Arguments != nil {
+		for _, arg := range loop.Arguments.Parameters {
+			resolved := resolveIterArg(arg, iterEnv)
+			params = append(params, resolved)
 		}
+	}
+
+	var iterInputs *model.Inputs
+	if len(params) > 0 {
 		iterInputs = &model.Inputs{Parameters: params}
 	}
 
@@ -339,6 +371,44 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, l
 		return fmt.Errorf("create iteration %s: %w", iterScope+bodyName, err)
 	}
 	return nil
+}
+
+// resolveIterArg resolves a single loop argument parameter against the current
+// iteration's env (which contains iterator.item, iterator.index, and loop_iter.* keys).
+//
+// If the argument value is a JSON string containing a {{...}} placeholder, it is
+// interpolated against the env. Non-string values (arrays, objects, numbers, booleans)
+// are forwarded as-is because they cannot contain placeholder expressions.
+//
+// This enables loop arguments like:
+//
+//	{"name": "filename", "value": "{{iterator.item}}"}   → resolved to item value
+//	{"name": "index",    "value": "{{iterator.index}}"}  → resolved to index value
+//	{"name": "outputs",  "value": [...]}                  → passed through unchanged
+func resolveIterArg(arg model.Parameter, iterEnv map[string]any) model.Parameter {
+	out := model.Parameter{Name: arg.Name, Type: arg.Type}
+
+	if len(arg.Value) == 0 {
+		return out
+	}
+
+	// If the raw JSON value is a quoted string, try {{...}} interpolation.
+	var s string
+	if json.Unmarshal(arg.Value, &s) == nil {
+		// It's a JSON string — interpolate placeholders.
+		resolved, interpolated := binding.Interpolate(s, iterEnv)
+		if interpolated {
+			b, _ := json.Marshal(resolved)
+			out.Value = b
+		} else {
+			out.Value = arg.Value
+		}
+		return out
+	}
+
+	// Non-string JSON value (array, object, number, bool) — pass through unchanged.
+	out.Value = arg.Value
+	return out
 }
 
 // trySpawnNextIterations refills active iteration slots for concurrency-limited
@@ -434,7 +504,7 @@ func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID strin
 
 	spawned := false
 	for slot := 0; slot < availableSlots && createdCount < totalIter; slot++ {
-		if err := e.createIterationRun(ctx, workflowRunID, parentTR, loop.Body, bodyTemplateType, createdCount, iterations[createdCount]); err != nil {
+		if err := e.createIterationRun(ctx, workflowRunID, parentTR, loop, loop.Body, bodyTemplateType, createdCount, iterations[createdCount]); err != nil {
 			return false, err
 		}
 		createdCount++

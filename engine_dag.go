@@ -244,8 +244,13 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 		if err != nil {
 			return fmt.Errorf("list siblings for task %q input resolution: %w", tr.TaskName, err)
 		}
+		var parentInputs *model.Inputs
+		if parentTR != nil {
+			parentInputs = parentTR.Inputs
+		}
 		env := binding.NewEnvBuilder().
 			WithWorkflowArgs(wf.Spec.Arguments).
+			WithResolvedInputs(parentInputs).
 			WithSiblingTaskRuns(siblingRuns).
 			Build()
 		binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
@@ -303,4 +308,54 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 	// Ancestor containers and the WorkflowRun will transition from Ready to Running
 	// via OnTaskStarted, which is called by the broker/worker when execution actually begins.
 	return e.taskBroker.Dispatch(ctx, assignment)
+}
+
+// resolveDAGInputs resolves the call-site arguments into the DAG container's declared inputs
+// and persists the result into the DAG's TaskRun.Inputs.
+//
+// This mirrors resolveLoopInputs: without this step, child tasks that reference
+// "inputs.parameters.*" in their arguments.valueFrom would always see empty values,
+// because dispatchLeafTask builds the EvalEnv from parentTR.Inputs.
+//
+// The persisted inputs are read back by dispatchLeafTask via parentTR.Inputs, so that
+// sub-tasks can resolve expressions like:
+//
+//	valueFrom: { parameter: "inputs.parameters.userid" }
+func (e *Engine) resolveDAGInputs(ctx context.Context, workflowRunID string, wf *model.Workflow, dagTR *store.TaskRun) (*model.Inputs, error) {
+	dagTmpl := internal.FindTemplate(wf, dagTR.TemplateName)
+	if dagTmpl == nil || dagTmpl.DAG == nil {
+		return nil, nil
+	}
+	// No inputs declared on this DAG template — nothing to resolve.
+	if dagTmpl.DAG.Inputs == nil || len(dagTmpl.DAG.Inputs.Parameters) == 0 {
+		return nil, nil
+	}
+
+	// Find call-site Arguments from the parent DAG task node (if any).
+	var callSiteArgs *model.Arguments
+	if dagTR.ParentRunID != "" {
+		parentTR, err := e.store.GetTaskRun(ctx, dagTR.ParentRunID)
+		if err != nil {
+			return nil, fmt.Errorf("get parent for dag %q: %w", dagTR.TaskName, err)
+		}
+		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+		if parentTmpl != nil && parentTmpl.DAG != nil {
+			if dagTask := internal.FindTask(parentTmpl.DAG, dagTR.TaskName); dagTask != nil {
+				callSiteArgs = dagTask.Arguments
+			}
+		}
+	}
+
+	// Build EvalEnv: workflow-level args + sibling outputs.
+	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, dagTR.ParentRunID)
+	if err != nil {
+		return nil, fmt.Errorf("list siblings for dag input binding %q: %w", dagTR.TaskName, err)
+	}
+	env := binding.NewEnvBuilder().
+		WithWorkflowArgs(wf.Spec.Arguments).
+		WithSiblingTaskRuns(siblingRuns).
+		Build()
+
+	binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
+	return binder.Bind(ctx, dagTmpl.DAG.Inputs, callSiteArgs, env)
 }

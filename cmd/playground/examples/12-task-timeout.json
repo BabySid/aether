@@ -13,52 +13,46 @@
                     "tasks": [
                         {
                             "name": "prepare",
-                            "executor": {
-                                "type": "echo",
-                                "config": {
-                                    "outputs": [
-                                        {
-                                            "name": "status",
-                                            "type": "string",
-                                            "value": "ready"
-                                        }
-                                    ]
-                                }
-                            }
+                            "inputs": {
+                                "parameters": [
+                                    {
+                                        "name": "outputs",
+                                        "value": [
+                                            {"name": "status", "type": "string", "value": "ready"}
+                                        ]
+                                    }
+                                ]
+                            },
+                            "executor": {"type": "echo"}
                         },
                         {
                             "name": "wait-external",
-                            "dependencies": [
-                                "prepare"
-                            ],
+                            "dependencies": ["prepare"],
                             "timeout": "1s",
                             "continueOn": {
                                 "timeout": true
                             },
-                            "executor": {
-                                "type": "echo",
-                                "config": {
-                                    "suspend": true
-                                }
-                            }
+                            "inputs": {
+                                "parameters": [
+                                    {"name": "suspend", "value": true}
+                                ]
+                            },
+                            "executor": {"type": "echo"}
                         },
                         {
                             "name": "finalize",
-                            "dependencies": [
-                                "wait-external"
-                            ],
-                            "executor": {
-                                "type": "echo",
-                                "config": {
-                                    "outputs": [
-                                        {
-                                            "name": "result",
-                                            "type": "string",
-                                            "value": "completed-after-timeout"
-                                        }
-                                    ]
-                                }
-                            }
+                            "dependencies": ["wait-external"],
+                            "inputs": {
+                                "parameters": [
+                                    {
+                                        "name": "outputs",
+                                        "value": [
+                                            {"name": "result", "type": "string", "value": "completed-after-timeout"}
+                                        ]
+                                    }
+                                ]
+                            },
+                            "executor": {"type": "echo"}
                         }
                     ]
                 }

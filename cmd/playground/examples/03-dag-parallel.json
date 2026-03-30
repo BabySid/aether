@@ -62,14 +62,17 @@
             {
                 "task": {
                     "name": "worker-a",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "result", "type": "object", "value": {"source": "A", "value": 10}}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "object", "value": {"source": "A", "value": 10}}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "result", "type": "object"}]
                     }
@@ -78,14 +81,17 @@
             {
                 "task": {
                     "name": "worker-b",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "result", "type": "object", "value": {"source": "B", "value": 20}}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "object", "value": {"source": "B", "value": 20}}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [{"name": "result", "type": "object"}]
                     }
@@ -97,18 +103,17 @@
                     "inputs": {
                         "parameters": [
                             {"name": "result-a", "type": "object"},
-                            {"name": "result-b", "type": "object"}
+                            {"name": "result-b", "type": "object"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "merged", "type": "bool", "value": true},
+                                    {"name": "total",  "type": "int",  "value": 30}
+                                ]
+                            }
                         ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "merged", "type": "bool", "value": true},
-                                {"name": "total",  "type": "int",  "value": 30}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [
                             {"name": "merged", "type": "bool"},

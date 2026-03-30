@@ -71,15 +71,18 @@
             {
                 "task": {
                     "name": "fetch-data",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "body",  "type": "array",  "value": [{"id": 1}, {"id": 2}]},
-                                {"name": "count", "type": "int",    "value": 2}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "body",  "type": "array",  "value": [{"id": 1}, {"id": 2}]},
+                                    {"name": "count", "type": "int",    "value": 2}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [
                             {"name": "body",  "type": "array"},
@@ -94,18 +97,17 @@
                     "inputs": {
                         "parameters": [
                             {"name": "raw",   "type": "array"},
-                            {"name": "count", "type": "int"}
+                            {"name": "count", "type": "int"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "summary", "type": "string", "value": "processed 2 records"},
+                                    {"name": "ok",      "type": "bool",   "value": true}
+                                ]
+                            }
                         ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "summary", "type": "string", "value": "processed 2 records"},
-                                {"name": "ok",      "type": "bool",   "value": true}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [
                             {"name": "summary", "type": "string"},
@@ -119,17 +121,16 @@
                     "name": "send-notify",
                     "inputs": {
                         "parameters": [
-                            {"name": "summary", "type": "string"}
+                            {"name": "summary", "type": "string"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "sent", "type": "bool", "value": true}
+                                ]
+                            }
                         ]
                     },
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "outputs": [
-                                {"name": "sent", "type": "bool", "value": true}
-                            ]
-                        }
-                    },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [
                             {"name": "sent", "type": "bool"}

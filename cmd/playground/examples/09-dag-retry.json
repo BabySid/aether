@@ -30,16 +30,19 @@
             {
                 "task": {
                     "name": "flaky-task",
-                    "executor": {
-                        "type": "echo",
-                        "config": {
-                            "failCount": 2,
-                            "outputs": [
-                                {"name": "status",  "type": "string", "value": "ok"},
-                                {"name": "attempt", "type": "int",    "value": 3}
-                            ]
-                        }
+                    "inputs": {
+                        "parameters": [
+                            {"name": "fail-count", "value": 2},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status",  "type": "string", "value": "ok"},
+                                    {"name": "attempt", "type": "int",    "value": 3}
+                                ]
+                            }
+                        ]
                     },
+                    "executor": {"type": "echo"},
                     "outputs": {
                         "parameters": [
                             {"name": "status",  "type": "string"},
