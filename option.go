@@ -10,6 +10,7 @@ import (
 	"github.com/BabySid/aether/secret"
 	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/timeout"
+	"github.com/BabySid/aether/vars"
 )
 
 // Option configures an Engine instance.
@@ -92,5 +93,29 @@ func WithHookNotifier(h hook.Notifier) Option {
 func WithTimeoutWatcher(w timeout.Watcher) Option {
 	return func(e *Engine) {
 		e.timeoutWatcher = w
+	}
+}
+
+// WithVarsSource registers a global Source at the engine level (optional).
+// Call multiple times to register multiple providers.
+//
+// Engine-level providers are injected into every VarBuilder at the start of each
+// variable resolution call, making their variables available in all workflow templates.
+// They have lower priority than per-call providers: if a per-call provider (e.g.
+// vars.WorkflowArgsSource) produces the same key, the per-call value wins.
+//
+// This option is intended for providers whose data is stable across workflow runs,
+// such as vars.SystemSource (exposes system.os and system.arch).
+//
+// Example:
+//
+//	engine, _ := aether.New(
+//	    aether.WithVarsSource(&vars.SystemSource{}),
+//	)
+func WithVarsSource(p vars.Source) Option {
+	return func(e *Engine) {
+		if p != nil {
+			e.varsSources = append(e.varsSources, p)
+		}
 	}
 }

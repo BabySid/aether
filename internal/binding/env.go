@@ -2,32 +2,50 @@
 //
 // It covers three concerns:
 //
-//  1. EvalEnv construction (env.go): builds a flat key→value snapshot from
+//  1. EvalVars construction (env.go): builds a flat key→value snapshot from
 //     workflow arguments, resolved inputs, sibling task runs, and loop iteration data.
 //
 //  2. Template interpolation (interpolate.go): expands {{key}} placeholders in
-//     strings using an EvalEnv, preserving original Go types when possible.
+//     strings using an EvalVars, preserving original Go types when possible.
 //
 //  3. Inputs binding (bind.go): merges template-declared inputs with call-site
-//     arguments and resolves all valueFrom references through the EvalEnv.
+//     arguments and resolves all valueFrom references through the EvalVars.
 //
 //  4. Outputs collection (collect.go): collects DAG or loop container outputs
 //     from child TaskRun results after the container has terminated.
 //
 // Key design invariant: Binder and Collector never access []*store.TaskRun directly.
-// All task-run data is pre-flattened into EvalEnv by EnvBuilder. This keeps
+// All task-run data is pre-flattened into EvalVars by VarBuilder. This keeps
 // resolution logic independent of the storage layer.
+//
+// # Extensibility via vars.Source
+//
+// The variable namespace is extensible through the vars.Source interface.
+// Each source owns one namespace (e.g. "system", "workflow", "tasks") and
+// returns a flat map of key→value pairs that are merged into the EvalVars.
+//
+// Built-in sources (WorkflowArgsSource, ResolvedInputsSource,
+// SiblingTaskRunsSource, LoopIterationSource) are value objects in the
+// vars package that carry their data at construction time. Users can follow
+// the same pattern to add custom namespaces (e.g. "system.*", "tenant.*").
+//
+// Registration:
+//   - Engine-level (global): use aether.WithVarsSource(s).
+//   - Per-run: create a value object and pass it via VarBuilder.WithSource(&MySource{...}).
+//
+// Merge order: sources registered first have lower priority; later sources
+// overwrite earlier ones for the same key.
 package binding
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
+	"github.com/BabySid/aether/vars"
 )
 
-// EvalEnv is a flat map of all variables available for expression evaluation
+// EvalVars is a flat map of all variables available for expression evaluation
 // and template variable interpolation at a given execution point.
 //
 // Key space:
@@ -41,52 +59,68 @@ import (
 //	"loop_iter.index"                            — current loop iteration index
 //	"loop_iter.item"                             — current iteration scalar item
 //	"loop_iter.<field>"                          — current iteration object field
-type EvalEnv map[string]any
+type EvalVars map[string]any
 
-// EnvBuilder collects data from multiple sources and produces an EvalEnv snapshot.
-// Use the With* methods to inject only the sources relevant to the current execution point,
-// then call Build() to obtain the immutable EvalEnv.
-type EnvBuilder struct {
-	env EvalEnv
+// VarBuilder collects data from multiple Sources and produces an EvalVars snapshot.
+//
+// Sources are indexed by Namespace(): each Source is placed into the bucket
+// identified by its namespace string, enabling namespace-scoped lookup and
+// selective (lazy) evaluation via Build(namespaces...).
+//
+// Use WithSource to register vars.Source implementations, or use the
+// convenience With* methods for the built-in source types.
+// Call Build() to obtain the EvalVars.
+//
+// Priority: sources registered later within the same namespace overwrite
+// earlier ones for duplicate keys. Namespaces written later overwrite
+// earlier namespaces for any colliding key.
+type VarBuilder struct {
+	// byNamespace maps namespace → ordered list of Sources for that namespace.
+	// Multiple Sources may share the same namespace; they are applied in registration order.
+	byNamespace map[string][]vars.Source
+	// nsOrder records the first-registration order of each namespace,
+	// so Build() produces a deterministic result regardless of map iteration order.
+	nsOrder []string
 }
 
-// NewEnvBuilder returns an empty EnvBuilder.
-func NewEnvBuilder() *EnvBuilder {
-	return &EnvBuilder{env: make(EvalEnv)}
+// NewVarBuilder returns an empty VarBuilder.
+func NewVarBuilder() *VarBuilder {
+	return &VarBuilder{
+		byNamespace: make(map[string][]vars.Source),
+	}
+}
+
+// WithSource registers a vars.Source under its Namespace().
+// Sources within the same namespace are applied in registration order;
+// later registrations overwrite earlier ones for duplicate keys.
+func (b *VarBuilder) WithSource(s vars.Source) *VarBuilder {
+	if s == nil {
+		return b
+	}
+	ns := s.Namespace()
+	if _, exists := b.byNamespace[ns]; !exists {
+		b.nsOrder = append(b.nsOrder, ns)
+	}
+	b.byNamespace[ns] = append(b.byNamespace[ns], s)
+	return b
 }
 
 // WithWorkflowArgs injects workflow-level arguments into the env.
 // Produces keys: "workflow.parameters.<name>"
 // The value is the parameter's Value; if empty, falls back to Default.
-func (b *EnvBuilder) WithWorkflowArgs(args *model.Arguments) *EnvBuilder {
-	if args == nil {
-		return b
-	}
-	for _, p := range args.Parameters {
-		raw := p.Value
-		if len(raw) == 0 || string(raw) == "null" {
-			raw = p.Default
-		}
-		b.env["workflow.parameters."+p.Name] = unmarshalAny(raw, p.Name)
-	}
-	return b
+//
+// Convenience wrapper around WithSource(&vars.WorkflowArgsSource{Args: args}).
+func (b *VarBuilder) WithWorkflowArgs(args *model.Arguments) *VarBuilder {
+	return b.WithSource(&vars.WorkflowArgsSource{Args: args})
 }
 
 // WithResolvedInputs injects the current template's already-bound inputs into the env.
 // Produces keys: "inputs.parameters.<name>"
 // This is used so that loop itemsFrom expressions can reference resolved loop inputs.
-func (b *EnvBuilder) WithResolvedInputs(inputs *model.Inputs) *EnvBuilder {
-	if inputs == nil {
-		return b
-	}
-	for _, p := range inputs.Parameters {
-		raw := p.Value
-		if len(raw) == 0 || string(raw) == "null" {
-			raw = p.Default
-		}
-		b.env["inputs.parameters."+p.Name] = unmarshalAny(raw, p.Name)
-	}
-	return b
+//
+// Convenience wrapper around WithSource(&vars.ResolvedInputsSource{Inputs: inputs}).
+func (b *VarBuilder) WithResolvedInputs(inputs *model.Inputs) *VarBuilder {
+	return b.WithSource(&vars.ResolvedInputsSource{Inputs: inputs})
 }
 
 // WithSiblingTaskRuns injects same-scope sibling task run state and outputs.
@@ -96,24 +130,10 @@ func (b *EnvBuilder) WithResolvedInputs(inputs *model.Inputs) *EnvBuilder {
 //	"tasks.<name>.code"
 //	"tasks.<name>.msg"
 //	"tasks.<name>.outputs.parameters.<param>"
-func (b *EnvBuilder) WithSiblingTaskRuns(runs []*store.TaskRun) *EnvBuilder {
-	for _, tr := range runs {
-		prefix := "tasks." + tr.TaskName
-		if tr.Status != nil {
-			b.env[prefix+".phase"] = string(*tr.Status)
-		} else {
-			b.env[prefix+".phase"] = ""
-		}
-		if tr.Outputs != nil {
-			b.env[prefix+".code"] = tr.Outputs.Code
-			b.env[prefix+".msg"] = tr.Outputs.Message
-			for _, p := range tr.Outputs.Parameters {
-				key := fmt.Sprintf("%s.outputs.parameters.%s", prefix, p.Name)
-				b.env[key] = unmarshalAny(p.Value, p.Name)
-			}
-		}
-	}
-	return b
+//
+// Convenience wrapper around WithSource(&vars.SiblingTaskRunsSource{Runs: runs}).
+func (b *VarBuilder) WithSiblingTaskRuns(runs []*store.TaskRun) *VarBuilder {
+	return b.WithSource(&vars.SiblingTaskRunsSource{Runs: runs})
 }
 
 // WithLoopIteration injects loop iteration parameters.
@@ -122,31 +142,40 @@ func (b *EnvBuilder) WithSiblingTaskRuns(runs []*store.TaskRun) *EnvBuilder {
 //   - a map[string]any         → each key stored under "loop_iter.<field>"
 //
 // "loop_iter.index" is always set to index.
-func (b *EnvBuilder) WithLoopIteration(index int, item any) *EnvBuilder {
-	b.env["loop_iter.index"] = index
-	if m, ok := item.(map[string]any); ok {
-		for k, v := range m {
-			b.env["loop_iter."+k] = v
-		}
-	} else if item != nil {
-		b.env["loop_iter.item"] = item
-	}
-	return b
+//
+// Convenience wrapper around WithSource(&vars.LoopIterationSource{Index: index, Item: item}).
+func (b *VarBuilder) WithLoopIteration(index int, item any) *VarBuilder {
+	return b.WithSource(&vars.LoopIterationSource{Index: index, Item: item})
 }
 
-// Build returns the constructed EvalEnv snapshot.
+// Build constructs an EvalVars snapshot from registered Sources.
+//
+//   - Build()                  — triggers all registered Sources (full build).
+//   - Build("system", "tasks") — triggers only the listed namespaces; Sources in
+//     other namespaces are not called (lazy / on-demand build).
+//
+// Within a namespace, Sources are applied in registration order; later
+// registrations overwrite earlier ones for duplicate keys.
 // The returned map should be treated as read-only.
-func (b *EnvBuilder) Build() EvalEnv {
-	result := make(EvalEnv, len(b.env))
-	for k, v := range b.env {
-		result[k] = v
+func (b *VarBuilder) Build(namespaces ...string) EvalVars {
+	env := make(EvalVars)
+	toProcess := b.nsOrder
+	if len(namespaces) > 0 {
+		toProcess = namespaces
 	}
-	return result
+	for _, ns := range toProcess {
+		for _, s := range b.byNamespace[ns] {
+			for k, v := range s.Vars() {
+				env[k] = v
+			}
+		}
+	}
+	return env
 }
 
 // unmarshalAny tries to decode raw JSON into a Go value.
-// On failure it returns the raw bytes as a string so the env always has something useful.
-func unmarshalAny(raw json.RawMessage, _ string) any {
+// On failure it returns the raw bytes as a string so callers always have something useful.
+func unmarshalAny(raw json.RawMessage) any {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}

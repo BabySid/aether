@@ -12,7 +12,7 @@ import (
 )
 
 // Binder merges template-declared inputs with call-site arguments and resolves
-// all valueFrom references through an EvalEnv.
+// all valueFrom references through an EvalVars.
 //
 // Binding priority (per parameter, independent):
 //
@@ -39,12 +39,12 @@ func NewBinder(eval expr.Evaluator, secretStore secret.Store) *Binder {
 //
 //   - decls     is the template's Inputs declaration (name/type/default).  May be nil.
 //   - arguments is the call-site parameter overrides (value/valueFrom).      May be nil.
-//   - env       is the current EvalEnv snapshot used for valueFrom resolution.
+//   - env       is the current EvalVars snapshot used for valueFrom resolution.
 func (b *Binder) Bind(
 	ctx context.Context,
 	decls *model.Inputs,
 	arguments *model.Arguments,
-	env EvalEnv,
+	env EvalVars,
 ) (*model.Inputs, error) {
 	// Index arguments by name for O(1) lookup
 	argIndex := make(map[string]model.Parameter)
@@ -100,7 +100,7 @@ func (b *Binder) Bind(
 // bindOne resolves a single parameter value.
 // decl is the template declaration (provides name/type/default).
 // arg  is the call-site argument (provides value/valueFrom override).
-func (b *Binder) bindOne(ctx context.Context, decl model.Parameter, arg model.Parameter, env EvalEnv) (model.Parameter, error) {
+func (b *Binder) bindOne(ctx context.Context, decl model.Parameter, arg model.Parameter, env EvalVars) (model.Parameter, error) {
 	out := model.Parameter{
 		Name:        decl.Name,
 		Type:        decl.Type,
@@ -166,9 +166,9 @@ func (b *Binder) bindOne(ctx context.Context, decl model.Parameter, arg model.Pa
 	return out, nil
 }
 
-// resolveValueFrom resolves a ValueFrom against the provided EvalEnv.
+// resolveValueFrom resolves a ValueFrom against the provided EvalVars.
 //
-// All path-style lookups go through the env map (populated by EnvBuilder),
+// All path-style lookups go through the env map (populated by VarBuilder),
 // so this function has no direct dependency on store.TaskRun or model.Arguments.
 //
 // Routing:
@@ -178,7 +178,7 @@ func (b *Binder) bindOne(ctx context.Context, decl model.Parameter, arg model.Pa
 //	               or "tasks.<n>.outputs.parameters.<p>" — determined by the key prefix present in env)
 //	expression   → Interpolate(expr, env) then eval
 //	secretKeyRef → secretStore.Get
-func (b *Binder) resolveValueFrom(ctx context.Context, vf *model.ValueFrom, env EvalEnv) (json.RawMessage, error) {
+func (b *Binder) resolveValueFrom(ctx context.Context, vf *model.ValueFrom, env EvalVars) (json.RawMessage, error) {
 	// 1. path
 	if vf.Path != "" {
 		return lookupEnv(vf.Path, env)
@@ -209,7 +209,7 @@ func (b *Binder) resolveValueFrom(ctx context.Context, vf *model.ValueFrom, env 
 
 // normalizeParameterRef converts legacy "workflow.arguments.parameters.<name>"
 // references to the canonical "workflow.parameters.<name>" form, so both formats
-// resolve via the same EvalEnv key.
+// resolve via the same EvalVars key.
 func normalizeParameterRef(ref string) string {
 	const legacyPrefix = "workflow.arguments.parameters."
 	const canonicalPrefix = "workflow.parameters."
@@ -220,7 +220,7 @@ func normalizeParameterRef(ref string) string {
 }
 
 // lookupEnv fetches key from env and marshals it to JSON.
-func lookupEnv(key string, env EvalEnv) (json.RawMessage, error) {
+func lookupEnv(key string, env EvalVars) (json.RawMessage, error) {
 	val, ok := env[key]
 	if !ok {
 		return nil, fmt.Errorf("key %q not found in eval env", key)
@@ -236,7 +236,7 @@ func lookupEnv(key string, env EvalEnv) (json.RawMessage, error) {
 }
 
 // resolveExpression interpolates {{...}} placeholders in expr, then evaluates it.
-func (b *Binder) resolveExpression(ctx context.Context, expression string, env EvalEnv) (json.RawMessage, error) {
+func (b *Binder) resolveExpression(ctx context.Context, expression string, env EvalVars) (json.RawMessage, error) {
 	if b.eval == nil {
 		return nil, fmt.Errorf("expression requires ExprEvaluator but none is configured")
 	}

@@ -8,13 +8,14 @@ import (
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
+	"github.com/BabySid/aether/vars"
 )
 
 // Collector assembles container-level outputs from child task run results.
 //
 // Two strategies are supported:
 //   - CollectDAGOutputs: reads declared valueFrom references for a DAG container
-//     and resolves each one from an EvalEnv built from the child task runs.
+//     and resolves each one from an EvalVars built from the child task runs.
 //   - CollectLoopOutputs: delegates to the loop aggregation strategy (last/first/list).
 type Collector struct {
 	eval expr.Evaluator
@@ -27,7 +28,7 @@ func NewCollector(eval expr.Evaluator) *Collector {
 }
 
 // CollectDAGOutputs resolves each output parameter declared in decls by looking
-// up its valueFrom in an EvalEnv built from children.
+// up its valueFrom in an EvalVars built from children.
 //
 // A declared output parameter must have a valueFrom that points to a child task:
 //
@@ -39,20 +40,21 @@ func (c *Collector) CollectDAGOutputs(
 	ctx context.Context,
 	decls *model.Outputs,
 	children []*store.TaskRun,
-	env EvalEnv,
+	env EvalVars,
 ) (*model.Outputs, error) {
 	if decls == nil || len(decls.Parameters) == 0 {
 		return nil, nil
 	}
 
 	// Augment env with children if caller didn't already include them
-	// (safe to re-add; WithSiblingTaskRuns just overwrites same keys)
-	augmented := NewEnvBuilder()
+	// (safe to re-add; SiblingTaskRunsProvider just overwrites same keys)
+	resolvedEnv := make(EvalVars, len(env))
 	for k, v := range env {
-		augmented.env[k] = v
+		resolvedEnv[k] = v
 	}
-	augmented.WithSiblingTaskRuns(children)
-	resolvedEnv := augmented.Build()
+	for k, v := range (&vars.SiblingTaskRunsSource{Runs: children}).Vars() {
+		resolvedEnv[k] = v
+	}
 
 	binder := NewBinder(c.eval, nil)
 
@@ -189,7 +191,7 @@ func aggregateList(results []IterationResult, paramFilter map[string]bool) (mode
 		}
 		for _, name := range paramNames {
 			if p, ok := byName[name]; ok {
-				lists[name] = append(lists[name], unmarshalAny(p.Value, name))
+				lists[name] = append(lists[name], unmarshalAny(p.Value))
 			} else {
 				lists[name] = append(lists[name], nil)
 			}

@@ -25,6 +25,7 @@ import (
 	"github.com/BabySid/aether/broker"
 	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
+	"github.com/BabySid/aether/vars"
 )
 
 func main() {
@@ -93,6 +94,9 @@ func main() {
 		aether.WithTaskBroker(brok),
 		aether.WithExecutorRegistry(reg),
 		aether.WithTimeoutWatcher(newPollingWatcher(memStore, 2*time.Second)),
+		// Built-in VarsSources: system.* namespace (os, arch, hostname, …)
+		// is always available so workflows can reference {{system.os}} etc.
+		aether.WithVarsSource(&vars.SystemSource{}),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)

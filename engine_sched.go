@@ -219,7 +219,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 			// Resolve dag.outputs.parameters valueFrom references from children.
 			tmpl := internal.FindTemplate(wf, parentTR.TemplateName)
 			if tmpl != nil && tmpl.DAG != nil && tmpl.DAG.Outputs != nil {
-				env := binding.NewEnvBuilder().
+				env := e.newVarBuilder().
 					WithWorkflowArgs(wf.Spec.Arguments).
 					WithSiblingTaskRuns(siblings).
 					Build()
@@ -332,7 +332,7 @@ func (e *Engine) activateTaskRun(ctx context.Context, workflowRunID string, wf *
 		// (markAncestorsReady + markAncestorsRunning walk up the chain at that point).
 		//
 		// Resolve call-site arguments into loop inputs before starting the controller
-		// so that startLoopController can build the EvalEnv with WithResolvedInputs and
+		// so that startLoopController can build the EvalVars with WithResolvedInputs and
 		// expressions like "{{inputs.parameters.content-list}}" in itemsFrom resolve correctly.
 		// Persist resolved inputs so trySpawnNextIterations can re-expand the item list
 		// using the same resolved values when spawning additional iterations later.

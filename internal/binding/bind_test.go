@@ -10,7 +10,7 @@ import (
 
 func TestBinder_Bind_NilDeclsNilArgs(t *testing.T) {
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), nil, nil, EvalEnv{})
+	result, err := b.Bind(context.Background(), nil, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestBinder_Bind_ArgValueOverridesDecl(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestBinder_Bind_ArgValueOverridesDecl(t *testing.T) {
 
 // Priority 2: arg.ValueFrom.parameter resolves from env.
 func TestBinder_Bind_ArgValueFromParameter(t *testing.T) {
-	env := EvalEnv{"workflow.parameters.token": "wf-token"}
+	env := EvalVars{"workflow.parameters.token": "wf-token"}
 	decls := &model.Inputs{
 		Parameters: []model.Parameter{{Name: "tok"}},
 	}
@@ -74,7 +74,7 @@ func TestBinder_Bind_DeclValueFallback(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, nil, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBinder_Bind_DefaultFallback(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, nil, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBinder_Bind_UndeclaredArgPassThrough(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestBinder_Bind_UndeclaredArgPassThrough(t *testing.T) {
 
 // valueFrom.path looks up env by key.
 func TestBinder_Bind_ArgValueFrom_PathLookup(t *testing.T) {
-	env := EvalEnv{"tasks.step1.outputs.parameters.out": "step1-out"}
+	env := EvalVars{"tasks.step1.outputs.parameters.out": "step1-out"}
 	decls := &model.Inputs{
 		Parameters: []model.Parameter{{Name: "p"}},
 	}
@@ -157,7 +157,7 @@ func TestBinder_Bind_ArgValueFrom_PathLookup(t *testing.T) {
 
 // valueFrom.parameter with legacy "workflow.arguments.parameters.*" alias is normalised.
 func TestBinder_Bind_ArgValueFrom_LegacyAlias(t *testing.T) {
-	env := EvalEnv{"workflow.parameters.env": "prod"}
+	env := EvalVars{"workflow.parameters.env": "prod"}
 	decls := &model.Inputs{
 		Parameters: []model.Parameter{{Name: "e"}},
 	}
@@ -192,7 +192,7 @@ func TestBinder_Bind_ArgValueFrom_Expression(t *testing.T) {
 		},
 	}
 	b := NewBinder(eval, nil)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestBinder_Bind_ArgValueFrom_ExpressionWithInterpolation(t *testing.T) {
 		// After interpolation "{{x}}+1" becomes "42+1"; echo it back.
 		return expr, nil
 	}}
-	env := EvalEnv{"x": "42"}
+	env := EvalVars{"x": "42"}
 	decls := &model.Inputs{Parameters: []model.Parameter{{Name: "out"}}}
 	args := &model.Arguments{
 		Parameters: []model.Parameter{
@@ -240,7 +240,7 @@ func TestBinder_Bind_ArgValueFrom_SecretKeyRef(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, ss)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestBinder_Bind_ArgValueFrom_UnresolvableFallsToDefault(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestBinder_Bind_ArgValueFrom_UnresolvableFallsToDefault(t *testing.T) {
 
 // Template-level decl.ValueFrom is resolved when no call-site arg is provided.
 func TestBinder_Bind_DeclValueFrom(t *testing.T) {
-	env := EvalEnv{"inputs.parameters.region": "us-east-1"}
+	env := EvalVars{"inputs.parameters.region": "us-east-1"}
 	decls := &model.Inputs{
 		Parameters: []model.Parameter{
 			{Name: "region", ValueFrom: &model.ValueFrom{Parameter: "inputs.parameters.region"}},
@@ -301,7 +301,7 @@ func TestBinder_Bind_ArtifactsPassThrough(t *testing.T) {
 		Artifacts: []model.Artifact{{Name: "my-artifact"}},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, nil, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestBinder_Bind_NullArgValueSkipped(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestBinder_Bind_ValueFrom_NoSource_ValueEmpty(t *testing.T) {
 		},
 	}
 	b := NewBinder(nil, nil)
-	result, err := b.Bind(context.Background(), decls, args, EvalEnv{})
+	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

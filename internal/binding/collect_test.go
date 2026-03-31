@@ -13,7 +13,7 @@ import (
 
 func TestCollectDAGOutputs_NilDecls(t *testing.T) {
 	c := NewCollector(nil)
-	out, err := c.CollectDAGOutputs(context.Background(), nil, nil, EvalEnv{})
+	out, err := c.CollectDAGOutputs(context.Background(), nil, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestCollectDAGOutputs_ResolvedFromChildren(t *testing.T) {
 		},
 	}
 	c := NewCollector(nil)
-	out, err := c.CollectDAGOutputs(context.Background(), decls, children, EvalEnv{})
+	out, err := c.CollectDAGOutputs(context.Background(), decls, children, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestCollectDAGOutputs_UnresolvableSkipped(t *testing.T) {
 		},
 	}
 	c := NewCollector(nil)
-	out, err := c.CollectDAGOutputs(context.Background(), decls, nil, EvalEnv{})
+	out, err := c.CollectDAGOutputs(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCollectDAGOutputs_StaticValue(t *testing.T) {
 		},
 	}
 	c := NewCollector(nil)
-	out, err := c.CollectDAGOutputs(context.Background(), decls, nil, EvalEnv{})
+	out, err := c.CollectDAGOutputs(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -13,7 +13,9 @@ import (
 	"github.com/BabySid/aether/hook"
 	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/internal"
+	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
+	"github.com/BabySid/aether/vars"
 	"github.com/BabySid/aether/secret"
 	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/timeout"
@@ -32,6 +34,25 @@ type Engine struct {
 	idGen          idgen.Generator
 	timeoutWatcher timeout.Watcher
 	stopFn         context.CancelFunc // set by Start; called by Stop
+
+	// varsSources holds engine-level Source registrations (global, per-engine).
+	// These are injected into every VarBuilder via newVarBuilder(), giving each
+	// workflow run access to the variables they provide (e.g. system.os, system.arch).
+	varsSources []vars.Source
+}
+
+// newVarBuilder returns an VarBuilder pre-seeded with all engine-level Sources.
+// Per-call providers (WorkflowArgsProvider, SiblingTaskRunsProvider, etc.) should be
+// appended after this call via WithProvider or the With* convenience methods.
+//
+// Engine-level providers have lower priority: per-call providers appended later will
+// overwrite any keys set by engine-level providers for the same name.
+func (e *Engine) newVarBuilder() *binding.VarBuilder {
+	b := binding.NewVarBuilder()
+	for _, p := range e.varsSources {
+		b.WithSource(p)
+	}
+	return b
 }
 
 // New creates an Engine with the given options.

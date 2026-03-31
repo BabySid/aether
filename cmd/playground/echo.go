@@ -225,17 +225,21 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 			log.Printf("[echo] taskRunID=%s  WARNING: %s", req.TaskRunID, msg)
 		}
 
-		// Resolve final value: use provided or fall back to zero-value
-		val := out.Value
-		if len(val) == 0 {
-			val = zeroValueFor(out.Type)
-		}
-
-		// Merge: override if input already carries this name
+		// Merge: if input already carries this name, echo its value unless
+		// the declared output explicitly provides a value.
 		if idx, exists := paramIdx[out.Name]; exists {
 			params[idx].Type = string(out.Type)
-			params[idx].Value = val
+			if len(out.Value) > 0 {
+				// Explicit override wins.
+				params[idx].Value = out.Value
+			}
+			// else: keep the input value as-is (echo semantics).
 		} else {
+			// New output not present in inputs: use declared value or zero.
+			val := out.Value
+			if len(val) == 0 {
+				val = zeroValueFor(out.Type)
+			}
 			paramIdx[out.Name] = len(params)
 			params = append(params, model.Parameter{
 				Name:  out.Name,

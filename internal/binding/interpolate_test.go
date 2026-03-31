@@ -3,7 +3,7 @@ package binding
 import "testing"
 
 func TestInterpolate_NoPlaceholder(t *testing.T) {
-	env := EvalEnv{"x": 42}
+	env := EvalVars{"x": 42}
 	val, ok := Interpolate("hello world", env)
 	if ok {
 		t.Fatal("expected wasInterpolated=false for string without placeholders")
@@ -14,7 +14,7 @@ func TestInterpolate_NoPlaceholder(t *testing.T) {
 }
 
 func TestInterpolate_SingleToken_TypePreserved(t *testing.T) {
-	env := EvalEnv{"num": 99}
+	env := EvalVars{"num": 99}
 	val, ok := Interpolate("{{num}}", env)
 	if !ok {
 		t.Fatal("expected wasInterpolated=true")
@@ -25,7 +25,7 @@ func TestInterpolate_SingleToken_TypePreserved(t *testing.T) {
 }
 
 func TestInterpolate_SingleToken_StringValue(t *testing.T) {
-	env := EvalEnv{"greeting": "hello"}
+	env := EvalVars{"greeting": "hello"}
 	val, ok := Interpolate("{{greeting}}", env)
 	if !ok {
 		t.Fatal("expected wasInterpolated=true")
@@ -36,7 +36,7 @@ func TestInterpolate_SingleToken_StringValue(t *testing.T) {
 }
 
 func TestInterpolate_SingleToken_KeyNotFound(t *testing.T) {
-	env := EvalEnv{}
+	env := EvalVars{}
 	val, ok := Interpolate("{{missing}}", env)
 	// Key not found: original string returned unchanged, wasInterpolated=false
 	if ok {
@@ -48,7 +48,7 @@ func TestInterpolate_SingleToken_KeyNotFound(t *testing.T) {
 }
 
 func TestInterpolate_MultiToken(t *testing.T) {
-	env := EvalEnv{"a": "foo", "b": "bar"}
+	env := EvalVars{"a": "foo", "b": "bar"}
 	val, ok := Interpolate("prefix-{{a}}-{{b}}-suffix", env)
 	if !ok {
 		t.Fatal("expected wasInterpolated=true")
@@ -59,7 +59,7 @@ func TestInterpolate_MultiToken(t *testing.T) {
 }
 
 func TestInterpolate_MultiToken_MissingKeyPreserved(t *testing.T) {
-	env := EvalEnv{"a": "A"}
+	env := EvalVars{"a": "A"}
 	val, ok := Interpolate("{{a}}-{{missing}}", env)
 	if !ok {
 		t.Fatal("expected wasInterpolated=true because {{a}} was replaced")
@@ -70,7 +70,7 @@ func TestInterpolate_MultiToken_MissingKeyPreserved(t *testing.T) {
 }
 
 func TestInterpolate_UnclosedBrace(t *testing.T) {
-	env := EvalEnv{"x": "X"}
+	env := EvalVars{"x": "X"}
 	// No closing }} → no interpolation, must not panic
 	_, ok := Interpolate("{{x", env)
 	if ok {
@@ -79,7 +79,7 @@ func TestInterpolate_UnclosedBrace(t *testing.T) {
 }
 
 func TestInterpolateString_NonStringValue(t *testing.T) {
-	env := EvalEnv{"n": 3.14}
+	env := EvalVars{"n": 3.14}
 	s := InterpolateString("{{n}}", env)
 	// fmt.Sprint(3.14) → "3.14"
 	if s != "3.14" {
@@ -88,7 +88,7 @@ func TestInterpolateString_NonStringValue(t *testing.T) {
 }
 
 func TestInterpolateString_NoPlaceholder(t *testing.T) {
-	s := InterpolateString("plain text", EvalEnv{})
+	s := InterpolateString("plain text", EvalVars{})
 	if s != "plain text" {
 		t.Fatalf("expected %q, got %q", "plain text", s)
 	}

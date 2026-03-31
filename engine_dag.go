@@ -228,7 +228,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 	// For loop iterations, iteration parameters (loop_iter.index, item fields) were pre-stored
 	// in tr.Inputs by startLoopController. Use them directly — no further resolution needed.
 	//
-	// For all other tasks (DAG tasks, top-level tasks), build an EvalEnv from workflow args and
+	// For all other tasks (DAG tasks, top-level tasks), build an EvalVars from workflow args and
 	// sibling TaskRun outputs, then let Binder merge taskDecl.Inputs with taskCall.Arguments and
 	// resolve any valueFrom references (expression, parameter, path, secretKeyRef).
 	var callSiteArgs *model.Arguments
@@ -248,7 +248,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 		if parentTR != nil {
 			parentInputs = parentTR.Inputs
 		}
-		env := binding.NewEnvBuilder().
+		env := e.newVarBuilder().
 			WithWorkflowArgs(wf.Spec.Arguments).
 			WithResolvedInputs(parentInputs).
 			WithSiblingTaskRuns(siblingRuns).
@@ -315,7 +315,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 //
 // This mirrors resolveLoopInputs: without this step, child tasks that reference
 // "inputs.parameters.*" in their arguments.valueFrom would always see empty values,
-// because dispatchLeafTask builds the EvalEnv from parentTR.Inputs.
+// because dispatchLeafTask builds the EvalVars from parentTR.Inputs.
 //
 // The persisted inputs are read back by dispatchLeafTask via parentTR.Inputs, so that
 // sub-tasks can resolve expressions like:
@@ -346,12 +346,12 @@ func (e *Engine) resolveDAGInputs(ctx context.Context, workflowRunID string, wf 
 		}
 	}
 
-	// Build EvalEnv: workflow-level args + sibling outputs.
+	// Build EvalVars: workflow-level args + sibling outputs.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, dagTR.ParentRunID)
 	if err != nil {
 		return nil, fmt.Errorf("list siblings for dag input binding %q: %w", dagTR.TaskName, err)
 	}
-	env := binding.NewEnvBuilder().
+	env := e.newVarBuilder().
 		WithWorkflowArgs(wf.Spec.Arguments).
 		WithSiblingTaskRuns(siblingRuns).
 		Build()

@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,7 @@ import (
 	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
+	"github.com/BabySid/aether/vars"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,13 +89,22 @@ type engineBundle struct {
 // newEngineBundle creates a fully-wired engine, broker, and store.
 // watchInterval controls how often the timeout watcher scans; use a smaller
 // value (e.g. 100ms) when testing task-level timeouts for faster detection.
+// extraOpts are appended after the standard engine options, allowing tests to
+// inject additional configuration such as WithVarsSource.
 // The caller is responsible for calling eng.Start() and eng.Stop().
-func newEngineBundle(t *testing.T, timeoutSec int, watchInterval ...time.Duration) *engineBundle {
+func newEngineBundle(t *testing.T, timeoutSec int, extraOpts ...any) *engineBundle {
 	t.Helper()
 
 	interval := 500 * time.Millisecond
-	if len(watchInterval) > 0 {
-		interval = watchInterval[0]
+	var engineOpts []aether.Option
+
+	for _, opt := range extraOpts {
+		switch v := opt.(type) {
+		case time.Duration:
+			interval = v
+		case aether.Option:
+			engineOpts = append(engineOpts, v)
+		}
 	}
 
 	reg := executor.NewRegistry()
@@ -120,15 +131,17 @@ func newEngineBundle(t *testing.T, timeoutSec int, watchInterval ...time.Duratio
 		},
 	)
 
-	var err error
-	eng, err = aether.New(
+	baseOpts := []aether.Option{
 		aether.WithStore(memStore),
 		aether.WithIDGenerator(NewAtomicIDGen()),
 		aether.WithExprEvaluator(NewSimpleEvaluator()),
 		aether.WithTaskBroker(brok),
 		aether.WithExecutorRegistry(reg),
 		aether.WithTimeoutWatcher(newPollingWatcher(memStore, interval)),
-	)
+	}
+
+	var err error
+	eng, err = aether.New(append(baseOpts, engineOpts...)...)
 	if err != nil {
 		t.Fatalf("create engine: %v", err)
 	}
@@ -576,5 +589,206 @@ func TestTaskTimeout(t *testing.T) {
 		}
 		t.Logf("  task=%-30s phase=%-12s outputs=[%s]",
 			task.TaskName, phase, strings.Join(outParts, ", "))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DeploymentSource — user-defined vars.Source for deployment metadata.
+//
+// Demonstrates how to implement a custom namespace ("deploy.*") and register
+// it at engine level via aether.WithVarsSource.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// DeploymentSource is a custom vars.Source that exposes deployment metadata
+// under the "deploy" namespace.
+type DeploymentSource struct {
+	Cluster string
+	Region  string
+}
+
+func (d *DeploymentSource) Namespace() string { return "deploy" }
+
+func (d *DeploymentSource) Vars() map[string]any {
+	return map[string]any{
+		"deploy.cluster": d.Cluster,
+		"deploy.region":  d.Region,
+	}
+}
+
+// Ensure DeploymentSource implements vars.Source at compile time.
+var _ vars.Source = (*DeploymentSource)(nil)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestCustomVars — end-to-end test for custom vars.Source.
+//
+// Workflow: 14-custom-vars.json
+//   - Task "report-env" receives {{system.os}}, {{system.arch}}, {{deploy.cluster}},
+//     {{deploy.region}} as arguments, resolved from two custom Sources.
+//   - The echo executor echoes them back as output parameters.
+//   - Test asserts the resolved values match the expected runtime values.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCustomVars(t *testing.T) {
+	const wfPath = "examples/14-custom-vars.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	// Wire engine with two custom Sources:
+	//   - vars.SystemSource{}          → system.os, system.arch
+	//   - DeploymentSource{...}        → deploy.cluster, deploy.region
+	b := newEngineBundle(t, 30,
+		aether.WithVarsSource(&vars.SystemSource{}),
+		aether.WithVarsSource(&DeploymentSource{
+			Cluster: "prod-cluster",
+			Region:  "ap-east-1",
+		}),
+	)
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+	t.Logf("submitted runID=%s", runID)
+
+	finalExec := waitTerminal(t, b, runID)
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+
+	// Build assertion: os and arch come from runtime, cluster/region from DeploymentSource.
+	osVal, _ := json.Marshal(runtime.GOOS)
+	archVal, _ := json.Marshal(runtime.GOARCH)
+	assertion := &WorkflowAssertion{
+		ExpectPhase: "Succeeded",
+		ExpectTasks: []TaskAssertion{
+			{
+				TaskName:    "report-env",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "os", Value: osVal},
+					{Name: "arch", Value: archVal},
+					{Name: "cluster", Value: json.RawMessage(`"prod-cluster"`)},
+					{Name: "region", Value: json.RawMessage(`"ap-east-1"`)},
+				},
+			},
+		},
+	}
+	assertExecution(t, finalExec, assertion)
+
+	for _, task := range finalExec.Tasks {
+		phase := model.Phase("")
+		if task.Status != nil {
+			phase = *task.Status
+		}
+		var outParts []string
+		if task.Outputs != nil {
+			for _, p := range task.Outputs.Parameters {
+				outParts = append(outParts, fmt.Sprintf("%s=%s", p.Name, string(p.Value)))
+			}
+		}
+		t.Logf("  task=%-30s phase=%-12s outputs=[%s]",
+			task.TaskName, phase, strings.Join(outParts, ", "))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestOSBranch — end-to-end test for OS-based DAG branching with custom vars.
+//
+// Workflow: 15-os-branch.json
+//   - Task "detect-os" reads system.os via vars.SystemSource and outputs it.
+//   - "run-on-mac" runs only when os == "darwin" (when condition).
+//   - "run-on-linux" runs only when os == "linux" (when condition).
+//   - Exactly one of the two branch tasks should Succeed; the other is Skipped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestOSBranch(t *testing.T) {
+	const wfPath = "examples/15-os-branch.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	// Wire engine with SystemSource so system.os is available.
+	b := newEngineBundle(t, 30, aether.WithVarsSource(&vars.SystemSource{}))
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+	t.Logf("submitted runID=%s", runID)
+
+	finalExec := waitTerminal(t, b, runID)
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+
+	// Determine expected branch phases based on current runtime OS.
+	macPhase, linuxPhase := "Skipped", "Skipped"
+	switch runtime.GOOS {
+	case "darwin":
+		macPhase = "Succeeded"
+	case "linux":
+		linuxPhase = "Succeeded"
+	}
+
+	osVal, _ := json.Marshal(runtime.GOOS)
+	assertion := &WorkflowAssertion{
+		ExpectPhase: "Succeeded",
+		ExpectTasks: []TaskAssertion{
+			{
+				TaskName:    "detect-os",
+				ExpectPhase: "Succeeded",
+				ExpectOutputs: []OutputAssertion{
+					{Name: "os", Value: osVal},
+				},
+			},
+			{
+				TaskName:    "run-on-mac",
+				ExpectPhase: macPhase,
+			},
+			{
+				TaskName:    "run-on-linux",
+				ExpectPhase: linuxPhase,
+			},
+		},
+	}
+	assertExecution(t, finalExec, assertion)
+
+	for _, task := range finalExec.Tasks {
+		phase := model.Phase("")
+		if task.Status != nil {
+			phase = *task.Status
+		}
+		var outParts []string
+		if task.Outputs != nil {
+			for _, p := range task.Outputs.Parameters {
+				outParts = append(outParts, fmt.Sprintf("%s=%s", p.Name, string(p.Value)))
+			}
+		}
+		if len(outParts) > 0 {
+			t.Logf("  task=%-30s phase=%-12s outputs=[%s]", task.TaskName, phase, strings.Join(outParts, ", "))
+		} else {
+			t.Logf("  task=%-30s phase=%-12s", task.TaskName, phase)
+		}
 	}
 }

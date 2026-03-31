@@ -5,6 +5,44 @@ import (
 	"strings"
 )
 
+// ExtractNamespaces scans s for all {{namespace.key}} placeholders and returns
+// the deduplicated list of namespace prefixes (the part before the first ".").
+//
+// Placeholders without a "." (e.g. "{{barekey}}") are ignored — they have no namespace.
+//
+// Example:
+//
+//	ExtractNamespaces("os={{system.os}} tenant={{tenant.name}} idx={{loop_iter.index}}")
+//	// → ["system", "tenant", "loop_iter"]
+//
+// Use the result to call VarBuilder.Build(namespaces...) for on-demand evaluation,
+// so that Sources whose namespace is not referenced in s are not triggered.
+func ExtractNamespaces(s string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	remaining := s
+	for {
+		start := strings.Index(remaining, "{{")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(remaining[start:], "}}")
+		if end == -1 {
+			break
+		}
+		key := strings.TrimSpace(remaining[start+2 : start+end])
+		if dot := strings.Index(key, "."); dot > 0 {
+			ns := key[:dot]
+			if !seen[ns] {
+				seen[ns] = true
+				result = append(result, ns)
+			}
+		}
+		remaining = remaining[start+end+2:]
+	}
+	return result
+}
+
 // Interpolate replaces {{key}} placeholders in s with values from env.
 //
 // Rules:
@@ -18,7 +56,7 @@ import (
 //	(resolvedValue any, wasInterpolated bool)
 //
 // wasInterpolated is true when at least one placeholder was substituted.
-func Interpolate(s string, env EvalEnv) (any, bool) {
+func Interpolate(s string, env EvalVars) (any, bool) {
 	// Fast path: no template markers at all
 	if !strings.Contains(s, "{{") {
 		return s, false
@@ -46,7 +84,7 @@ func Interpolate(s string, env EvalEnv) (any, bool) {
 // InterpolateString is a convenience wrapper that always returns a string.
 // It is suitable for contexts that only accept string values (e.g., log messages,
 // executor config fields that are always strings).
-func InterpolateString(s string, env EvalEnv) string {
+func InterpolateString(s string, env EvalVars) string {
 	v, _ := Interpolate(s, env)
 	if str, ok := v.(string); ok {
 		return str
@@ -57,7 +95,7 @@ func InterpolateString(s string, env EvalEnv) string {
 // replacePlaceholders scans s for all {{key}} tokens and replaces each with
 // fmt.Sprint(env[key]). Returns the substituted string and whether any
 // substitution was made.
-func replacePlaceholders(s string, env EvalEnv) (string, bool) {
+func replacePlaceholders(s string, env EvalVars) (string, bool) {
 	var sb strings.Builder
 	replaced := false
 	remaining := s

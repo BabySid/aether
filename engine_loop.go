@@ -13,7 +13,7 @@ import (
 
 // resolveLoopInputs binds the call-site arguments to the loop template's declared inputs.
 //
-// Returns the resolved *model.Inputs that startLoopController uses to build the EvalEnv
+// Returns the resolved *model.Inputs that startLoopController uses to build the EvalVars
 // via binding.WithResolvedInputs(...), making expressions like
 // itemsFrom: "{{inputs.parameters.content-list}}" resolvable.
 //
@@ -40,12 +40,12 @@ func (e *Engine) resolveLoopInputs(ctx context.Context, workflowRunID string, wf
 		}
 	}
 
-	// Build EvalEnv: workflow-level args + sibling outputs.
+	// Build EvalVars: workflow-level args + sibling outputs.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, loopTR.ParentRunID)
 	if err != nil {
 		return nil, fmt.Errorf("list siblings for loop input binding %q: %w", loopTR.TaskName, err)
 	}
-	env := binding.NewEnvBuilder().
+	env := e.newVarBuilder().
 		WithWorkflowArgs(wf.Spec.Arguments).
 		WithSiblingTaskRuns(siblingRuns).
 		Build()
@@ -111,13 +111,13 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, 
 	}
 
 	// 2. Expand iterations.
-	// Build EvalEnv from workflow args + sibling task outputs + loop's resolved inputs
+	// Build EvalVars from workflow args + sibling task outputs + loop's resolved inputs
 	// so that itemsFrom expressions like "{{inputs.parameters.content-list}}" resolve correctly.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, loopTR.ParentRunID)
 	if err != nil {
 		return fmt.Errorf("list siblings for loop %q: %w", loopTR.TemplateName, err)
 	}
-	env := binding.NewEnvBuilder().
+	env := e.newVarBuilder().
 		WithWorkflowArgs(wf.Spec.Arguments).
 		WithResolvedInputs(resolvedInputs).
 		WithSiblingTaskRuns(siblingRuns).
@@ -456,12 +456,12 @@ func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID strin
 	}
 
 	// Re-expand iterations to know the total count and each item's params.
-	// Use the same EvalEnv approach: workflow args + loop resolved inputs + sibling outputs.
+	// Use the same EvalVars approach: workflow args + loop resolved inputs + sibling outputs.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, parentTR.ParentRunID)
 	if err != nil {
 		return false, fmt.Errorf("list siblings for loop %q concurrency advance: %w", parentTR.TemplateName, err)
 	}
-	env := binding.NewEnvBuilder().
+	env := e.newVarBuilder().
 		WithWorkflowArgs(wf.Spec.Arguments).
 		WithResolvedInputs(parentTR.Inputs).
 		WithSiblingTaskRuns(siblingRuns).
