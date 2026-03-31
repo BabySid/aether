@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/secret"
@@ -27,12 +28,14 @@ import (
 type Binder struct {
 	eval        expr.Evaluator
 	secretStore secret.Store
+	sink        errsink.ErrorSink
 }
 
-// NewBinder returns a Binder. Both eval and secretStore may be nil; they are
-// only required when resolving valueFrom.expression or valueFrom.secretKeyRef.
-func NewBinder(eval expr.Evaluator, secretStore secret.Store) *Binder {
-	return &Binder{eval: eval, secretStore: secretStore}
+// NewBinder returns a Binder. eval, secretStore, and sink may be nil; they are
+// only required when resolving valueFrom.expression, valueFrom.secretKeyRef,
+// or reporting resolution warnings respectively.
+func NewBinder(eval expr.Evaluator, secretStore secret.Store, sink errsink.ErrorSink) *Binder {
+	return &Binder{eval: eval, secretStore: secretStore, sink: sink}
 }
 
 // Bind returns a fully-bound copy of the declared inputs.
@@ -119,6 +122,13 @@ func (b *Binder) bindOne(ctx context.Context, decl model.Parameter, arg model.Pa
 	if arg.ValueFrom != nil {
 		val, err := b.resolveValueFrom(ctx, arg.ValueFrom, env)
 		if err != nil {
+			// Report the resolution failure to ErrorSink for observability.
+			if b.sink != nil {
+				b.sink.OnError(ctx, err, errsink.ErrorContext{
+					Operation: "bind.resolveValueFrom." + decl.Name,
+					Severity:  errsink.SeverityWarning,
+				})
+			}
 			// Fall through to default on resolution failure.
 			if len(decl.Default) > 0 {
 				out.Value = decl.Default
@@ -147,6 +157,12 @@ func (b *Binder) bindOne(ctx context.Context, decl model.Parameter, arg model.Pa
 	if decl.ValueFrom != nil {
 		val, err := b.resolveValueFrom(ctx, decl.ValueFrom, env)
 		if err != nil {
+			if b.sink != nil {
+				b.sink.OnError(ctx, err, errsink.ErrorContext{
+					Operation: "bind.resolveValueFrom." + decl.Name,
+					Severity:  errsink.SeverityWarning,
+				})
+			}
 			// Fall through to default on resolution failure.
 			if len(decl.Default) > 0 {
 				out.Value = decl.Default

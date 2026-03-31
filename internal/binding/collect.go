@@ -3,6 +3,7 @@ package binding
 import (
 	"context"
 
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/expr"
 	ivars "github.com/BabySid/aether/internal/vars"
 	"github.com/BabySid/aether/model"
@@ -17,12 +18,14 @@ import (
 // Loop output aggregation is handled by internal.AggregateResults in loop.go.
 type Collector struct {
 	eval expr.Evaluator
+	sink errsink.ErrorSink
 }
 
 // NewCollector returns a Collector backed by the given expression evaluator.
 // eval may be nil if none of the DAG output declarations use valueFrom.expression.
-func NewCollector(eval expr.Evaluator) *Collector {
-	return &Collector{eval: eval}
+// sink may be nil; when provided, resolution errors are reported for observability.
+func NewCollector(eval expr.Evaluator, sink errsink.ErrorSink) *Collector {
+	return &Collector{eval: eval, sink: sink}
 }
 
 // CollectDAGOutputs resolves each output parameter declared in decls by looking
@@ -54,7 +57,7 @@ func (c *Collector) CollectDAGOutputs(
 		resolvedEnv[k] = v
 	}
 
-	binder := NewBinder(c.eval, nil)
+	binder := NewBinder(c.eval, nil, c.sink)
 
 	out := &model.Outputs{}
 	for _, decl := range decls.Parameters {
@@ -62,7 +65,14 @@ func (c *Collector) CollectDAGOutputs(
 		if decl.ValueFrom != nil {
 			raw, err := binder.resolveValueFrom(ctx, decl.ValueFrom, resolvedEnv)
 			if err != nil {
-				// Best-effort: skip unresolvable outputs rather than failing
+				// Best-effort: skip unresolvable outputs rather than failing.
+				// Report to ErrorSink for observability.
+				if c.sink != nil {
+					c.sink.OnError(ctx, err, errsink.ErrorContext{
+						Operation: "collectDAGOutputs." + decl.Name,
+						Severity:  errsink.SeverityWarning,
+					})
+				}
 				continue
 			}
 			p.Value = raw

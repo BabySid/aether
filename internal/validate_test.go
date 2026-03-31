@@ -901,6 +901,104 @@ func TestValidate_EntrypointMultiple_OneInvalid(t *testing.T) {
 	assertContains(t, err.Error(), "unknown task")
 }
 
+// --- Hook validation tests ---
+
+func TestValidate_HookTemplateValid(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Hooks = &model.Hooks{
+		OnStart:   &model.Hook{Template: "exec-a"},
+		OnSuccess: &model.Hook{Template: "exec-a"},
+	}
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected valid hook template, got: %v", err)
+	}
+}
+
+func TestValidate_HookTemplateUnknown(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Hooks = &model.Hooks{
+		OnFailure: &model.Hook{Template: "nonexistent"},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for hook referencing unknown template")
+	}
+	assertContains(t, err.Error(), "references unknown template")
+}
+
+func TestValidate_HookTemplateMustBeTask(t *testing.T) {
+	wf := validWorkflow()
+	// main is a DAG template — hooks should not reference it
+	wf.Spec.Hooks = &model.Hooks{
+		OnSuccess: &model.Hook{Template: "main"},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for hook referencing DAG template")
+	}
+	assertContains(t, err.Error(), "must be a task template")
+}
+
+func TestValidate_HookTemplateLoop(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates = append(wf.Spec.Templates, model.Template{
+		Loop: &model.Loop{
+			Name:  "my-loop",
+			Body:  "exec-a",
+			Items: []any{1},
+		},
+	})
+	wf.Spec.Hooks = &model.Hooks{
+		OnError: &model.Hook{Template: "my-loop"},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for hook referencing Loop template")
+	}
+	assertContains(t, err.Error(), "must be a task template")
+}
+
+func TestValidate_TaskLevelHookValid(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[0].DAG.Tasks[0].Hooks = &model.Hooks{
+		OnSuccess: &model.Hook{Template: "exec-a"},
+		OnSuspend: &model.Hook{Template: "exec-a"},
+		OnResume:  &model.Hook{Template: "exec-a"},
+	}
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected valid task-level hooks, got: %v", err)
+	}
+}
+
+func TestValidate_TaskLevelHookInvalid(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[0].DAG.Tasks[0].Hooks = &model.Hooks{
+		OnExit: &model.Hook{Template: "main"}, // DAG template
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for task hook referencing DAG template")
+	}
+	assertContains(t, err.Error(), "must be a task template")
+}
+
+func TestValidate_AllHookTypes(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Hooks = &model.Hooks{
+		OnStart:   &model.Hook{Template: "exec-a"},
+		OnSuccess: &model.Hook{Template: "exec-a"},
+		OnFailure: &model.Hook{Template: "exec-a"},
+		OnError:   &model.Hook{Template: "exec-a"},
+		OnSuspend: &model.Hook{Template: "exec-a"},
+		OnResume:  &model.Hook{Template: "exec-a"},
+		OnCancel:  &model.Hook{Template: "exec-a"},
+		OnExit:    &model.Hook{Template: "exec-a"},
+	}
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected all hook types to pass validation, got: %v", err)
+	}
+}
+
 // --- Helpers ---
 
 // assertContains checks if s contains substr.

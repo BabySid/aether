@@ -51,7 +51,7 @@ func TestEvalPhaseConditions_NilConditions(t *testing.T) {
 	phase := EvalPhaseConditions(context.Background(), nil, &mockEval{fn: func(string, map[string]any) (any, error) {
 		t.Fatal("eval should not be called when conditions=nil")
 		return nil, nil
-	}}, result)
+	}}, result, nil)
 	if phase != model.PhaseFailed {
 		t.Errorf("expected PhaseFailed, got %q", phase)
 	}
@@ -62,7 +62,7 @@ func TestEvalPhaseConditions_NilEvaluator(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeSucceeded},
 	}
 	conditions := &model.PhaseConditions{Failed: "true"}
-	phase := EvalPhaseConditions(context.Background(), conditions, nil, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, nil, result, nil)
 	if phase != model.PhaseSucceeded {
 		t.Errorf("expected PhaseSucceeded (base phase), got %q", phase)
 	}
@@ -70,7 +70,7 @@ func TestEvalPhaseConditions_NilEvaluator(t *testing.T) {
 
 func TestEvalPhaseConditions_NilExecOutputs(t *testing.T) {
 	result := &broker.TaskResult{ExecOutputs: nil}
-	phase := EvalPhaseConditions(context.Background(), nil, nil, result)
+	phase := EvalPhaseConditions(context.Background(), nil, nil, result, nil)
 	// code=0 → PhaseSucceeded
 	if phase != model.PhaseSucceeded {
 		t.Errorf("expected PhaseSucceeded for nil ExecOutputs, got %q", phase)
@@ -83,7 +83,7 @@ func TestEvalPhaseConditions_SucceededOverride(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeFailed},
 	}
 	conditions := &model.PhaseConditions{Succeeded: "always-true"}
-	phase := EvalPhaseConditions(context.Background(), conditions, eval, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 	if phase != model.PhaseSucceeded {
 		t.Errorf("expected PhaseSucceeded override, got %q", phase)
 	}
@@ -100,7 +100,7 @@ func TestEvalPhaseConditions_FailedOverride(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeSucceeded},
 	}
 	conditions := &model.PhaseConditions{Succeeded: "succ-cond", Failed: "fail-cond"}
-	phase := EvalPhaseConditions(context.Background(), conditions, eval, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 	// Succeeded is checked first but returns false → Failed returns true
 	if phase != model.PhaseFailed {
 		t.Errorf("expected PhaseFailed override, got %q", phase)
@@ -118,7 +118,7 @@ func TestEvalPhaseConditions_ErrorOverride(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeSucceeded},
 	}
 	conditions := &model.PhaseConditions{Error: "err-cond"}
-	phase := EvalPhaseConditions(context.Background(), conditions, eval, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 	if phase != model.PhaseError {
 		t.Errorf("expected PhaseError override, got %q", phase)
 	}
@@ -130,7 +130,7 @@ func TestEvalPhaseConditions_NoConditionMatch_FallsBackToBase(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeTimeout},
 	}
 	conditions := &model.PhaseConditions{Succeeded: "x", Failed: "y", Error: "z"}
-	phase := EvalPhaseConditions(context.Background(), conditions, eval, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 	if phase != model.PhaseTimeout {
 		t.Errorf("expected PhaseTimeout fallback, got %q", phase)
 	}
@@ -144,7 +144,7 @@ func TestEvalPhaseConditions_EvalError_TreatedAsFalse(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeFailed},
 	}
 	conditions := &model.PhaseConditions{Succeeded: "broken"}
-	phase := EvalPhaseConditions(context.Background(), conditions, eval, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 	// eval error → condition treated as false → base phase returned
 	if phase != model.PhaseFailed {
 		t.Errorf("expected PhaseFailed fallback on eval error, got %q", phase)
@@ -158,7 +158,7 @@ func TestEvalPhaseConditions_SucceededPriority(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeError},
 	}
 	conditions := &model.PhaseConditions{Succeeded: "a", Failed: "b", Error: "c"}
-	phase := EvalPhaseConditions(context.Background(), conditions, eval, result)
+	phase := EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 	if phase != model.PhaseSucceeded {
 		t.Errorf("expected PhaseSucceeded (highest priority), got %q", phase)
 	}
@@ -182,7 +182,7 @@ func TestEvalPhaseConditions_EnvContainsBaseFields(t *testing.T) {
 		ExecOutputs: &model.ExecOutputs{Code: model.ExecCodeFailed, Message: "timeout upstream"},
 	}
 	conditions := &model.PhaseConditions{Succeeded: "check"}
-	EvalPhaseConditions(context.Background(), conditions, eval, result)
+	EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 
 	if eval.env["phase"] != string(model.PhaseFailed) {
 		t.Errorf("expected phase=%q, got %v", model.PhaseFailed, eval.env["phase"])
@@ -211,7 +211,7 @@ func TestEvalPhaseConditions_OutputParamTypes(t *testing.T) {
 	}
 	conditions := &model.PhaseConditions{Succeeded: "true"}
 
-	EvalPhaseConditions(context.Background(), conditions, eval, result)
+	EvalPhaseConditions(context.Background(), conditions, eval, result, nil)
 
 	tests := []struct {
 		key      string

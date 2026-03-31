@@ -9,7 +9,7 @@ import (
 )
 
 func TestBinder_Bind_NilDeclsNilArgs(t *testing.T) {
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), nil, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -31,7 +31,7 @@ func TestBinder_Bind_ArgValueOverridesDecl(t *testing.T) {
 			{Name: "p", Value: rawJSON("arg-value")},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -54,7 +54,7 @@ func TestBinder_Bind_ArgValueFromParameter(t *testing.T) {
 			{Name: "tok", ValueFrom: &model.ValueFrom{Parameter: "workflow.parameters.token"}},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -73,7 +73,7 @@ func TestBinder_Bind_DeclValueFallback(t *testing.T) {
 			{Name: "p", Value: rawJSON("decl-explicit")},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -92,7 +92,7 @@ func TestBinder_Bind_DefaultFallback(t *testing.T) {
 			{Name: "p", Default: rawJSON("fallback")},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,7 +115,7 @@ func TestBinder_Bind_UndeclaredArgPassThrough(t *testing.T) {
 			{Name: "extra", Value: rawJSON("e-val")},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -143,7 +143,7 @@ func TestBinder_Bind_ArgValueFrom_PathLookup(t *testing.T) {
 			{Name: "p", ValueFrom: &model.ValueFrom{Path: "tasks.step1.outputs.parameters.out"}},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -166,7 +166,7 @@ func TestBinder_Bind_ArgValueFrom_LegacyAlias(t *testing.T) {
 			{Name: "e", ValueFrom: &model.ValueFrom{Parameter: "workflow.arguments.parameters.env"}},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -191,7 +191,7 @@ func TestBinder_Bind_ArgValueFrom_Expression(t *testing.T) {
 			{Name: "p", ValueFrom: &model.ValueFrom{Expression: "1+1"}},
 		},
 	}
-	b := NewBinder(eval, nil)
+	b := NewBinder(eval, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -216,7 +216,7 @@ func TestBinder_Bind_ArgValueFrom_ExpressionWithInterpolation(t *testing.T) {
 			{Name: "out", ValueFrom: &model.ValueFrom{Expression: "{{x}}+1"}},
 		},
 	}
-	b := NewBinder(eval, nil)
+	b := NewBinder(eval, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -239,7 +239,7 @@ func TestBinder_Bind_ArgValueFrom_SecretKeyRef(t *testing.T) {
 			{Name: "key", ValueFrom: &model.ValueFrom{SecretKeyRef: &model.SecretKeyRef{Name: "my-secret", Key: "api-key"}}},
 		},
 	}
-	b := NewBinder(nil, ss)
+	b := NewBinder(nil, ss, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -263,7 +263,7 @@ func TestBinder_Bind_ArgValueFrom_UnresolvableFallsToDefault(t *testing.T) {
 			{Name: "p", ValueFrom: &model.ValueFrom{Path: "nonexistent.key"}},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -283,7 +283,7 @@ func TestBinder_Bind_DeclValueFrom(t *testing.T) {
 			{Name: "region", ValueFrom: &model.ValueFrom{Parameter: "inputs.parameters.region"}},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, nil, env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -300,7 +300,7 @@ func TestBinder_Bind_ArtifactsPassThrough(t *testing.T) {
 	decls := &model.Inputs{
 		Artifacts: []model.Artifact{{Name: "my-artifact"}},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, nil, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -322,7 +322,7 @@ func TestBinder_Bind_NullArgValueSkipped(t *testing.T) {
 			{Name: "p", Value: json.RawMessage("null")},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -342,7 +342,7 @@ func TestBinder_Bind_ValueFrom_NoSource_ValueEmpty(t *testing.T) {
 			{Name: "p", ValueFrom: &model.ValueFrom{}},
 		},
 	}
-	b := NewBinder(nil, nil)
+	b := NewBinder(nil, nil, nil)
 	result, err := b.Bind(context.Background(), decls, args, EvalVars{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

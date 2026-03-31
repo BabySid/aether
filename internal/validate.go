@@ -115,6 +115,22 @@ func Validate(wf *model.Workflow) error {
 		}
 	}
 
+	// Validate hook template references: hooks must reference task templates only.
+	if err := validateHooks(wf, "spec.hooks", wf.Spec.Hooks); err != nil {
+		return err
+	}
+	for i := range wf.Spec.Templates {
+		tmpl := &wf.Spec.Templates[i]
+		if tmpl.DAG != nil {
+			for j := range tmpl.DAG.Tasks {
+				task := &tmpl.DAG.Tasks[j]
+				if err := validateHooks(wf, fmt.Sprintf("template %q task %q hooks", tmpl.GetName(), task.Name), task.Hooks); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	// Static nesting depth check from entrypoint.
 	// Use the spec-configured limit, capped by the absolute ceiling.
 	maxDepth := wf.Spec.MaxNestedDepth
@@ -277,5 +293,51 @@ func validateNestingDepth(wf *model.Workflow, tmplName string, depth, maxDepth i
 	}
 
 	// Executor is a leaf node — no further nesting.
+	return nil
+}
+
+// validateHooks checks that all hook template references point to task templates
+// (with an executor), not DAG or Loop templates. Hooks are fire-and-forget
+// notifications; allowing DAG/Loop hooks would introduce recursive scheduling
+// complexity with no clear use case.
+func validateHooks(wf *model.Workflow, location string, hooks *model.Hooks) error {
+	if hooks == nil {
+		return nil
+	}
+
+	check := func(hookName, tmplName string) error {
+		if tmplName == "" {
+			return nil
+		}
+		tmpl := FindTemplate(wf, tmplName)
+		if tmpl == nil {
+			return fmt.Errorf("%s: %s references unknown template %q", location, hookName, tmplName)
+		}
+		if tmpl.Task == nil {
+			return fmt.Errorf("%s: %s template %q must be a task template (not dag or loop)", location, hookName, tmplName)
+		}
+		return nil
+	}
+
+	for _, pair := range []struct {
+		name string
+		hook *model.Hook
+	}{
+		{"onStart", hooks.OnStart},
+		{"onSuccess", hooks.OnSuccess},
+		{"onFailure", hooks.OnFailure},
+		{"onError", hooks.OnError},
+		{"onSuspend", hooks.OnSuspend},
+		{"onResume", hooks.OnResume},
+		{"onCancel", hooks.OnCancel},
+		{"onExit", hooks.OnExit},
+	} {
+		if pair.hook != nil {
+			if err := check(pair.name, pair.hook.Template); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }

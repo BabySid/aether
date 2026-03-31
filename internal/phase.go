@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/BabySid/aether/broker"
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/model"
 )
@@ -37,6 +38,15 @@ func CodeToPhase(code int) model.Phase {
 	}
 }
 
+// EvalErrorContext carries the ErrorSink and identifiers needed to report
+// expression evaluation failures. This avoids bloating function signatures
+// with individual sink/workflowRunID/taskRunID parameters.
+type EvalErrorContext struct {
+	Sink          errsink.ErrorSink
+	WorkflowRunID string
+	TaskRunID     string
+}
+
 // EvalPhaseConditions evaluates phaseConditions to determine the final task phase.
 // If phaseConditions is nil, the phase derived from result.ExecOutputs.Code is returned as-is.
 //
@@ -48,6 +58,7 @@ func EvalPhaseConditions(
 	conditions *model.PhaseConditions,
 	eval expr.Evaluator,
 	result *broker.TaskResult,
+	errCtx *EvalErrorContext,
 ) model.Phase {
 	// Derive the base phase from Code (single source of truth).
 	var code int
@@ -76,17 +87,17 @@ func EvalPhaseConditions(
 
 	// Evaluate conditions in priority order: succeeded > failed > error
 	if conditions.Succeeded != "" {
-		if evalBool(ctx, eval, conditions.Succeeded, env) {
+		if evalBool(ctx, eval, conditions.Succeeded, env, errCtx) {
 			return model.PhaseSucceeded
 		}
 	}
 	if conditions.Failed != "" {
-		if evalBool(ctx, eval, conditions.Failed, env) {
+		if evalBool(ctx, eval, conditions.Failed, env, errCtx) {
 			return model.PhaseFailed
 		}
 	}
 	if conditions.Error != "" {
-		if evalBool(ctx, eval, conditions.Error, env) {
+		if evalBool(ctx, eval, conditions.Error, env, errCtx) {
 			return model.PhaseError
 		}
 	}
@@ -110,9 +121,18 @@ func unmarshalParam(raw json.RawMessage) any {
 }
 
 // evalBool evaluates an expression and returns true if the result is truthy.
-func evalBool(ctx context.Context, eval expr.Evaluator, expression string, env map[string]any) bool {
+// Evaluation errors are reported to the ErrorSink (if provided) and treated as false.
+func evalBool(ctx context.Context, eval expr.Evaluator, expression string, env map[string]any, errCtx *EvalErrorContext) bool {
 	result, err := eval.Eval(ctx, expression, env)
 	if err != nil {
+		if errCtx != nil && errCtx.Sink != nil {
+			errCtx.Sink.OnError(ctx, err, errsink.ErrorContext{
+				WorkflowRunID: errCtx.WorkflowRunID,
+				TaskRunID:     errCtx.TaskRunID,
+				Operation:     "evalPhaseConditions",
+				Severity:      errsink.SeverityWarning,
+			})
+		}
 		return false
 	}
 	switch v := result.(type) {

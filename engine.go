@@ -3,23 +3,25 @@ package aether
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/BabySid/aether/artifact"
 	"github.com/BabySid/aether/broker"
+	"github.com/BabySid/aether/errsink"
+	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/hook"
-	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
-	"github.com/BabySid/aether/vars"
 	"github.com/BabySid/aether/secret"
 	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/timeout"
+	"github.com/BabySid/aether/vars"
 )
 
 // Engine is the core workflow scheduling engine.
@@ -32,6 +34,7 @@ type Engine struct {
 	artifactStore  artifact.Store
 	secretStore    secret.Store
 	hookNotifier   hook.Notifier
+	errorSink      errsink.ErrorSink
 	idGen          idgen.Generator
 	timeoutWatcher timeout.Watcher
 	stopOnce sync.Once           // ensures Stop logic runs exactly once
@@ -298,7 +301,19 @@ func (e *Engine) Resume(ctx context.Context, workflowID string, taskID string, p
 	}
 	// Use stored (merged) inputs — skip re-binding.
 	assignment.Inputs = tr.Inputs
-	return e.taskBroker.Dispatch(ctx, assignment)
+	if dispatchErr := e.taskBroker.Dispatch(ctx, assignment); dispatchErr != nil {
+		return dispatchErr
+	}
+
+	// Fire task-level OnResume hook.
+	if parentTR != nil {
+		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+		if parentTmpl != nil && parentTmpl.DAG != nil {
+			task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
+			internal.FireResumeHook(ctx, e.hookNotifier, e.errorSink, task, tr.WorkflowRunID, tr.RunID)
+		}
+	}
+	return nil
 }
 
 // Cancel cancels a running workflow. Non-blocking.
@@ -337,20 +352,35 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 		}
 		switch *tr.Status {
 		case model.PhaseRunning, model.PhaseSuspended:
-			_ = e.taskBroker.Cancel(ctx, tr.RunID)
-			_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			if brokerErr := e.taskBroker.Cancel(ctx, tr.RunID); brokerErr != nil {
+				e.reportError(ctx, brokerErr, errsink.ErrorContext{
+					WorkflowRunID: workflowID, TaskRunID: tr.RunID,
+					Operation: "cancel.brokerCancel", Severity: errsink.SeverityWarning,
+				})
+			}
+			if _, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
 				RunID:   tr.RunID,
 				Token:   tr.Token,
 				Status:  &cancelled,
 				Message: &cancelMsg,
-			})
+			}); updateErr != nil && !errors.Is(updateErr, store.ErrTokenMismatch) {
+				e.reportError(ctx, updateErr, errsink.ErrorContext{
+					WorkflowRunID: workflowID, TaskRunID: tr.RunID,
+					Operation: "cancel.updateTaskRun", Severity: errsink.SeverityError,
+				})
+			}
 		case model.PhaseCreated, model.PhaseReady:
-			_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+			if _, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
 				RunID:   tr.RunID,
 				Token:   tr.Token,
 				Status:  &cancelled,
 				Message: &cancelMsg,
-			})
+			}); updateErr != nil && !errors.Is(updateErr, store.ErrTokenMismatch) {
+				e.reportError(ctx, updateErr, errsink.ErrorContext{
+					WorkflowRunID: workflowID, TaskRunID: tr.RunID,
+					Operation: "cancel.updateTaskRun", Severity: errsink.SeverityError,
+				})
+			}
 		}
 	}
 
@@ -358,18 +388,40 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 	// Use Get + UpdateWorkflowRun to avoid overwriting a terminal status already set by finalizeWorkflow.
 	wfRun, err := e.store.GetWorkflowRun(ctx, workflowID)
 	if err == nil && (wfRun.Status == nil || !wfRun.Status.IsTerminal()) {
-		_, _ = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+		if _, updateErr := e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
 			RunID:   wfRun.RunID,
 			Token:   wfRun.Token,
 			Status:  &cancelled,
 			Message: &cancelMsg,
-		})
+		}); updateErr != nil && !errors.Is(updateErr, store.ErrTokenMismatch) {
+			e.reportError(ctx, updateErr, errsink.ErrorContext{
+				WorkflowRunID: workflowID,
+				Operation:     "cancel.updateWorkflowRun", Severity: errsink.SeverityError,
+			})
+		}
 	}
 
 	var wf model.Workflow
 	if err := json.Unmarshal(run.Workflow, &wf); err == nil {
 		internal.FillDefaults(&wf)
-		internal.FireWorkflowHooks(ctx, e.hookNotifier, &wf, workflowID, model.PhaseCancelled)
+
+		// Fire task-level cancel hooks for all cancelled tasks.
+		for _, tr := range taskRuns {
+			if tr.Status == nil || tr.Status.IsTerminal() {
+				continue // already terminal before cancel — hook not applicable
+			}
+			if tr.ParentRunID != "" {
+				if parentTR, pErr := e.store.GetTaskRun(ctx, tr.ParentRunID); pErr == nil {
+					parentTmpl := internal.FindTemplate(&wf, parentTR.TemplateName)
+					if parentTmpl != nil && parentTmpl.DAG != nil {
+						task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
+						internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, workflowID, tr.RunID, model.PhaseCancelled)
+					}
+				}
+			}
+		}
+
+		internal.FireWorkflowHooks(ctx, e.hookNotifier, e.errorSink, &wf, workflowID, model.PhaseCancelled)
 	}
 
 	return nil
@@ -393,16 +445,45 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID string) {
 		running := model.PhaseRunning
 		empty := ""
 		startedAt := time.Now().UTC().Format(time.RFC3339)
-		_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		if _, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   taskRunID,
 			Token:   tr.Token,
 			Status:  &running,
 			Message: &empty,
 			Metrics: &model.Metrics{StartedAt: startedAt},
-		})
+		}); updateErr != nil && !errors.Is(updateErr, store.ErrTokenMismatch) {
+			e.reportError(ctx, updateErr, errsink.ErrorContext{
+				WorkflowRunID: tr.WorkflowRunID, TaskRunID: taskRunID,
+				Operation: "onTaskStarted.updateTaskRun", Severity: errsink.SeverityWarning,
+			})
+		}
 	}
 	// 2. Transition ancestor containers (DAG/Loop) and the WorkflowRun: Ready → Running.
-	_ = e.markAncestorsRunning(ctx, tr.WorkflowRunID, tr.ParentRunID)
+	wfPromoted, markErr := e.markAncestorsRunning(ctx, tr.WorkflowRunID, tr.ParentRunID)
+	if markErr != nil {
+		e.reportError(ctx, markErr, errsink.ErrorContext{
+			WorkflowRunID: tr.WorkflowRunID, TaskRunID: taskRunID,
+			Operation: "onTaskStarted.markAncestorsRunning", Severity: errsink.SeverityWarning,
+		})
+	}
+
+	// 3. Fire workflow-level OnStart hook (exactly once, when first promoted to Running).
+	if wfPromoted {
+		if wf, loadErr := e.loadWorkflow(ctx, tr.WorkflowRunID); loadErr == nil {
+			internal.FireWorkflowHooks(ctx, e.hookNotifier, e.errorSink, wf, tr.WorkflowRunID, model.PhaseRunning)
+		}
+	}
+
+	// 4. Fire task-level OnStart hook.
+	if wf, loadErr := e.loadWorkflow(ctx, tr.WorkflowRunID); loadErr == nil && tr.ParentRunID != "" {
+		if parentTR, parentErr := e.store.GetTaskRun(ctx, tr.ParentRunID); parentErr == nil {
+			parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+			if parentTmpl != nil && parentTmpl.DAG != nil {
+				task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
+				internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, tr.WorkflowRunID, taskRunID, model.PhaseRunning)
+			}
+		}
+	}
 }
 
 // OnTaskCompleted is invoked when a task finishes execution.
@@ -438,7 +519,14 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	// so we avoid a second GetTaskRun(parentRunID) call below.
 	var parentTR *store.TaskRun
 	if tr.ParentRunID != "" {
-		parentTR, _ = e.store.GetTaskRun(ctx, tr.ParentRunID)
+		var parentErr error
+		parentTR, parentErr = e.store.GetTaskRun(ctx, tr.ParentRunID)
+		if parentErr != nil {
+			e.reportError(ctx, parentErr, errsink.ErrorContext{
+				WorkflowRunID: result.WorkflowRunID, TaskRunID: result.TaskRunID,
+				Operation: "onTaskCompleted.getParentTR", Severity: errsink.SeverityWarning,
+			})
+		}
 	}
 	// Look up phaseConditions from named template or inline DAG task node.
 	var phaseConditions *model.PhaseConditions
@@ -454,7 +542,9 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 			}
 		}
 	}
-	phase := internal.EvalPhaseConditions(ctx, phaseConditions, e.exprEvaluator, result)
+	phase := internal.EvalPhaseConditions(ctx, phaseConditions, e.exprEvaluator, result, &internal.EvalErrorContext{
+		Sink: e.errorSink, WorkflowRunID: result.WorkflowRunID, TaskRunID: tr.RunID,
+	})
 
 	// --- Suspend fast-path (ExecCodeSuspended → PhaseSuspended) ---
 	//
@@ -479,13 +569,26 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 		if result.ExecOutputs != nil {
 			suspendMsg = result.ExecOutputs.Message
 		}
-		_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		if _, suspendErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   tr.RunID,
 			Token:   tr.Token,
 			Status:  &phase,
 			Message: &suspendMsg,
 			Outputs: mergedOutputs,
-		})
+		}); suspendErr != nil && !errors.Is(suspendErr, store.ErrTokenMismatch) {
+			e.reportError(ctx, suspendErr, errsink.ErrorContext{
+				WorkflowRunID: result.WorkflowRunID, TaskRunID: tr.RunID,
+				Operation: "onTaskCompleted.suspend", Severity: errsink.SeverityError,
+			})
+		}
+		// Fire task-level OnSuspend hook.
+		if parentTR != nil {
+			parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+			if parentTmpl != nil && parentTmpl.DAG != nil {
+				task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
+				internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, result.WorkflowRunID, tr.RunID, model.PhaseSuspended)
+			}
+		}
 		return
 	}
 
@@ -509,6 +612,10 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 		needRetry, rerr := internal.ShouldRetry(ctx, tr, phase, retryPolicy, e.exprEvaluator)
 		if rerr != nil {
 			// Expression evaluation failed — treat as non-retryable and fall through.
+			e.reportError(ctx, rerr, errsink.ErrorContext{
+				WorkflowRunID: result.WorkflowRunID, TaskRunID: tr.RunID,
+				Operation: "onTaskCompleted.retryExpression", Severity: errsink.SeverityWarning,
+			})
 			needRetry = false
 		}
 
@@ -529,7 +636,13 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 				RetryCount: &newCount,
 			})
 			if retryErr == nil {
-				_ = e.dispatchLeafTask(ctx, result.WorkflowRunID, wf, retryTR)
+				if dispatchErr := e.dispatchLeafTask(ctx, result.WorkflowRunID, wf, retryTR); dispatchErr != nil {
+					e.reportError(ctx, dispatchErr, errsink.ErrorContext{
+						WorkflowRunID: result.WorkflowRunID, TaskRunID: tr.RunID,
+						Operation: "onTaskCompleted.retryDispatch", Severity: errsink.SeverityError,
+					})
+					e.tryMarkTaskError(ctx, result.WorkflowRunID, tr.RunID, dispatchErr)
+				}
 			}
 			return
 		}
@@ -612,14 +725,20 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
 		if parentTmpl != nil && parentTmpl.DAG != nil {
 			task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
-			internal.FireTaskHooks(ctx, e.hookNotifier, task, result.WorkflowRunID, phase)
+			internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, result.WorkflowRunID, tr.RunID, phase)
 		}
 	}
 
 	// 5. Re-advance the scope this task belongs to.
 	// tr.ParentRunID identifies the scope (DAG/Loop container) that owns this task.
 	// advanceScope will find newly-ready tasks, or finalize the scope if all are done.
-	_ = e.advanceScope(ctx, result.WorkflowRunID, wf, tr.ParentRunID)
+	if advErr := e.advanceScope(ctx, result.WorkflowRunID, wf, tr.ParentRunID); advErr != nil {
+		e.reportError(ctx, advErr, errsink.ErrorContext{
+			WorkflowRunID: result.WorkflowRunID, TaskRunID: result.TaskRunID,
+			Operation: "onTaskCompleted.advanceScope", Severity: errsink.SeverityCritical,
+		})
+		e.tryMarkWorkflowError(ctx, result.WorkflowRunID, advErr)
+	}
 }
 
 // Start launches the Engine's background services (currently: timeout watchdog).
@@ -681,7 +800,12 @@ func (e *Engine) OnTaskTimeout(ctx context.Context, taskRunID string) {
 	}
 
 	// Best-effort broker cancellation (fast-path termination if the Broker is alive).
-	_ = e.taskBroker.Cancel(ctx, taskRunID)
+	if brokerErr := e.taskBroker.Cancel(ctx, taskRunID); brokerErr != nil {
+		e.reportError(ctx, brokerErr, errsink.ErrorContext{
+			WorkflowRunID: tr.WorkflowRunID, TaskRunID: taskRunID,
+			Operation: "onTaskTimeout.brokerCancel", Severity: errsink.SeverityWarning,
+		})
+	}
 
 	// Drive the existing completion path with a Timeout result.
 	// OnTaskCompleted handles Token-based optimistic locking, hooks, retry checks,
@@ -723,31 +847,116 @@ func (e *Engine) OnWorkflowTimeout(ctx context.Context, workflowRunID string) {
 		if tr.Status != nil && tr.Status.IsTerminal() {
 			continue
 		}
-		_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		if _, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   tr.RunID,
 			Token:   tr.Token,
 			Status:  &timeoutPhase,
 			Message: &timeoutMsg,
-		})
-		_ = e.taskBroker.Cancel(ctx, tr.RunID)
+		}); updateErr != nil && !errors.Is(updateErr, store.ErrTokenMismatch) {
+			e.reportError(ctx, updateErr, errsink.ErrorContext{
+				WorkflowRunID: workflowRunID, TaskRunID: tr.RunID,
+				Operation: "onWorkflowTimeout.updateTaskRun", Severity: errsink.SeverityWarning,
+			})
+		}
+		if brokerErr := e.taskBroker.Cancel(ctx, tr.RunID); brokerErr != nil {
+			e.reportError(ctx, brokerErr, errsink.ErrorContext{
+				WorkflowRunID: workflowRunID, TaskRunID: tr.RunID,
+				Operation: "onWorkflowTimeout.brokerCancel", Severity: errsink.SeverityWarning,
+			})
+		}
 	}
 
 	// Mark the workflow itself as Timeout.
 	// Use wr.Token fetched at the top — the Token-based optimistic lock guards
 	// against a concurrent writer; if the Token is stale the update is a no-op.
 	wfMsg := "workflow deadline exceeded"
-	_, _ = e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+	if _, updateErr := e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
 		RunID:   workflowRunID,
 		Token:   wr.Token,
 		Status:  &timeoutPhase,
 		Message: &wfMsg,
-	})
+	}); updateErr != nil && !errors.Is(updateErr, store.ErrTokenMismatch) {
+		e.reportError(ctx, updateErr, errsink.ErrorContext{
+			WorkflowRunID: workflowRunID,
+			Operation:     "onWorkflowTimeout.updateWorkflowRun", Severity: errsink.SeverityError,
+		})
+	}
 
 	// Fire workflow hooks.
 	var wf model.Workflow
 	if jsonErr := json.Unmarshal(wr.Workflow, &wf); jsonErr == nil {
 		internal.FillDefaults(&wf)
-		internal.FireWorkflowHooks(ctx, e.hookNotifier, &wf, workflowRunID, model.PhaseTimeout)
+		internal.FireWorkflowHooks(ctx, e.hookNotifier, e.errorSink, &wf, workflowRunID, model.PhaseTimeout)
+	}
+}
+
+// reportError sends an error to the ErrorSink (if configured).
+// It is a no-op when no ErrorSink is present.
+func (e *Engine) reportError(ctx context.Context, err error, ec errsink.ErrorContext) {
+	if e.errorSink != nil {
+		e.errorSink.OnError(ctx, err, ec)
+	}
+}
+
+// tryMarkWorkflowError is the last-resort fallback: when a critical-path operation
+// fails (advanceScope, dispatchLeafTask), try to transition the workflow to PhaseError
+// so it does not hang in a non-terminal state forever.
+func (e *Engine) tryMarkWorkflowError(ctx context.Context, workflowRunID string, cause error) {
+	wr, getErr := e.store.GetWorkflowRun(ctx, workflowRunID)
+	if getErr != nil {
+		e.reportError(ctx, fmt.Errorf("tryMarkWorkflowError: get workflow: %w (original: %v)", getErr, cause), errsink.ErrorContext{
+			WorkflowRunID: workflowRunID,
+			Operation:     "tryMarkWorkflowError",
+			Severity:      errsink.SeverityCritical,
+		})
+		return
+	}
+	if wr.Status != nil && wr.Status.IsTerminal() {
+		return
+	}
+	errPhase := model.PhaseError
+	errMsg := fmt.Sprintf("engine internal error: %v", cause)
+	_, updateErr := e.store.UpdateWorkflowRun(ctx, &store.WorkflowRun{
+		RunID:   wr.RunID,
+		Token:   wr.Token,
+		Status:  &errPhase,
+		Message: &errMsg,
+	})
+	if updateErr != nil {
+		e.reportError(ctx, fmt.Errorf("tryMarkWorkflowError: update failed: %w (original: %v)", updateErr, cause), errsink.ErrorContext{
+			WorkflowRunID: workflowRunID,
+			Operation:     "tryMarkWorkflowError",
+			Severity:      errsink.SeverityCritical,
+		})
+	}
+}
+
+// tryMarkTaskError is a fallback that transitions a task to PhaseError when a
+// critical operation (e.g. retry dispatch) fails, preventing the task from hanging.
+func (e *Engine) tryMarkTaskError(ctx context.Context, workflowRunID, taskRunID string, cause error) {
+	tr, getErr := e.store.GetTaskRun(ctx, taskRunID)
+	if getErr != nil {
+		e.reportError(ctx, fmt.Errorf("tryMarkTaskError: get failed: %w (original: %v)", getErr, cause), errsink.ErrorContext{
+			WorkflowRunID: workflowRunID, TaskRunID: taskRunID,
+			Operation: "tryMarkTaskError", Severity: errsink.SeverityCritical,
+		})
+		return
+	}
+	if tr.Status != nil && tr.Status.IsTerminal() {
+		return
+	}
+	errPhase := model.PhaseError
+	errMsg := fmt.Sprintf("engine internal error: %v", cause)
+	if _, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		RunID:   tr.RunID,
+		Token:   tr.Token,
+		Status:  &errPhase,
+		Message: &errMsg,
+	}); updateErr != nil {
+		e.reportError(ctx, fmt.Errorf("tryMarkTaskError: update failed: %w (original: %v)", updateErr, cause), errsink.ErrorContext{
+			WorkflowRunID: workflowRunID, TaskRunID: taskRunID,
+			Operation: "tryMarkTaskError", Severity: errsink.SeverityCritical,
+		})
 	}
 }
 

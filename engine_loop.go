@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
@@ -50,7 +51,7 @@ func (e *Engine) resolveLoopInputs(ctx context.Context, workflowRunID string, wf
 		WithSiblingTaskRuns(siblingRuns).
 		Build()
 
-	binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
+	binder := binding.NewBinder(e.exprEvaluator, e.secretStore, e.errorSink)
 	return binder.Bind(ctx, loopTmpl.Loop.Inputs, callSiteArgs, env)
 }
 
@@ -124,16 +125,25 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, 
 		Build()
 	iterations, err := internal.ExpandLoopIterations(ctx, loop, e.exprEvaluator, env)
 	if err != nil {
-		// Expansion failed (e.g. expression error). Mark the loop as Error so the
-		// parent scope can detect a terminal state and progress rather than hanging.
+		// Expansion failed (e.g. expression error). Report to ErrorSink, then mark
+		// the loop as Error so the parent scope can detect a terminal state.
+		e.reportError(ctx, err, errsink.ErrorContext{
+			WorkflowRunID: workflowRunID, TaskRunID: loopTR.RunID,
+			Operation: "startLoopController.expandLoop", Severity: errsink.SeverityError,
+		})
 		errPhase := model.PhaseError
 		errMsg := fmt.Sprintf("expand loop %q: %v", loopTR.TemplateName, err)
-		_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
+		if _, updateErr := e.store.UpdateTaskRun(ctx, &store.TaskRun{
 			RunID:   loopTR.RunID,
 			Token:   loopTR.Token,
 			Status:  &errPhase,
 			Message: &errMsg,
-		})
+		}); updateErr != nil {
+			e.reportError(ctx, updateErr, errsink.ErrorContext{
+				WorkflowRunID: workflowRunID, TaskRunID: loopTR.RunID,
+				Operation: "startLoopController.markError", Severity: errsink.SeverityError,
+			})
+		}
 		return nil
 	}
 
@@ -335,7 +345,10 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, l
 	// Start with the raw iteration params (loop_iter.*).
 	params := make([]model.Parameter, 0, len(iterParams))
 	for k, v := range iterParams {
-		valJSON, _ := json.Marshal(v)
+		valJSON, marshalErr := json.Marshal(v)
+		if marshalErr != nil {
+			return fmt.Errorf("marshal iteration param %q: %w", k, marshalErr)
+		}
 		params = append(params, model.Parameter{Name: k, Value: valJSON})
 	}
 

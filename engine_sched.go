@@ -231,7 +231,7 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 					WithWorkflowArgs(wf.Spec.Arguments).
 					WithSiblingTaskRuns(siblings).
 					Build()
-				collector := binding.NewCollector(e.exprEvaluator)
+				collector := binding.NewCollector(e.exprEvaluator, e.errorSink)
 				collected, _ := collector.CollectDAGOutputs(ctx, tmpl.DAG.Outputs, siblings, env)
 				if collected != nil {
 					containerOutputs = &model.Outputs{
@@ -414,7 +414,7 @@ func (e *Engine) markAncestorsReady(ctx context.Context, workflowRunID string, p
 		Status:  &ready,
 		Message: &empty,
 	})
-	_ = err
+	// Token mismatch or already Ready — either is fine, not an error.
 	return nil
 }
 
@@ -425,13 +425,15 @@ func (e *Engine) markAncestorsReady(ctx context.Context, workflowRunID string, p
 //
 // Called from OnTaskStarted when a leaf task transitions Ready → Running,
 // so container ancestors and the WorkflowRun reflect the moment real execution begins.
-func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string, parentRunID string) error {
+// markAncestorsRunning walks up the scope tree and promotes Ready → Running.
+// Returns true if the WorkflowRun itself was promoted (first transition to Running).
+func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string, parentRunID string) (bool, error) {
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 
 	for parentRunID != "" {
 		ancestor, err := e.store.GetTaskRun(ctx, parentRunID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		// Only transition Ready → Running. If already Running or terminal, stop walking.
 		if ancestor.Status == nil || *ancestor.Status != model.PhaseReady {
@@ -456,10 +458,10 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string,
 	// Promote the WorkflowRun from Ready to Running (idempotent via Token).
 	wfRun, err := e.store.GetWorkflowRun(ctx, workflowRunID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if wfRun.Status == nil || *wfRun.Status != model.PhaseReady {
-		return nil
+		return false, nil
 	}
 	running := model.PhaseRunning
 	empty := ""
@@ -470,9 +472,11 @@ func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string,
 		Message: &empty,
 		Metrics: &model.Metrics{StartedAt: startedAt},
 	})
-	// Token mismatch or already Running — either is fine, not an error.
-	_ = err
-	return nil
+	if err != nil {
+		// Token mismatch: another goroutine already promoted — not an error.
+		return false, nil
+	}
+	return true, nil
 }
 
 // finalizeWorkflow marks the workflow as complete based on top-level TaskRun results.
@@ -522,7 +526,7 @@ func (e *Engine) finalizeWorkflow(ctx context.Context, workflowRunID string, top
 	}
 
 	if wf != nil {
-		internal.FireWorkflowHooks(ctx, e.hookNotifier, wf, workflowRunID, phase)
+		internal.FireWorkflowHooks(ctx, e.hookNotifier, e.errorSink, wf, workflowRunID, phase)
 	}
 }
 

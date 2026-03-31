@@ -33,12 +33,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	aether "github.com/BabySid/aether"
 	"github.com/BabySid/aether/broker"
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/executor"
+	"github.com/BabySid/aether/hook"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/vars"
 )
@@ -860,6 +863,410 @@ func TestOSBranch(t *testing.T) {
 			t.Logf("  task=%-30s phase=%-12s outputs=[%s]", task.TaskName, phase, strings.Join(outParts, ", "))
 		} else {
 			t.Logf("  task=%-30s phase=%-12s", task.TaskName, phase)
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hook integration test helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// testNotifier captures hook events for assertion.
+type testNotifier struct {
+	mu     sync.Mutex
+	events []*hook.Event
+}
+
+func (n *testNotifier) Notify(_ context.Context, event *hook.Event) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.events = append(n.events, event)
+	return nil
+}
+
+func (n *testNotifier) Events() []*hook.Event {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	cp := make([]*hook.Event, len(n.events))
+	copy(cp, n.events)
+	return cp
+}
+
+// hasEvent checks if at least one event matches the given scope and hook type.
+func (n *testNotifier) hasEvent(scope hook.Scope, ht hook.Type) bool {
+	for _, ev := range n.Events() {
+		if ev.Scope == scope && ev.HookType == ht {
+			return true
+		}
+	}
+	return false
+}
+
+// countEvents returns the number of events matching the given scope and hook type.
+func (n *testNotifier) countEvents(scope hook.Scope, ht hook.Type) int {
+	count := 0
+	for _, ev := range n.Events() {
+		if ev.Scope == scope && ev.HookType == ht {
+			count++
+		}
+	}
+	return count
+}
+
+// testErrorSink captures errors reported to the ErrorSink.
+type testErrorSink struct {
+	mu     sync.Mutex
+	errors []errsink.ErrorContext
+}
+
+func (s *testErrorSink) OnError(_ context.Context, _ error, ec errsink.ErrorContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.errors = append(s.errors, ec)
+}
+
+func (s *testErrorSink) Errors() []errsink.ErrorContext {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]errsink.ErrorContext, len(s.errors))
+	copy(cp, s.errors)
+	return cp
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestHooksLifecycle — verifies workflow-level and task-level hooks fire
+// during a normal successful run.
+//
+// Workflow: 24-hooks-lifecycle.json
+//   - Workflow hooks: onStart, onSuccess, onExit
+//   - Task hooks on step-a and step-b: onStart, onSuccess, onExit
+//
+// Expected events:
+//   - Workflow: OnStart, OnSuccess, OnExit
+//   - Task: OnStart x2, OnSuccess x2, OnExit x2
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestHooksLifecycle(t *testing.T) {
+	const wfPath = "examples/24-hooks-lifecycle.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	notifier := &testNotifier{}
+	sink := &testErrorSink{}
+
+	b := newEngineBundle(t, 30,
+		aether.WithHookNotifier(notifier),
+		aether.WithErrorSink(sink),
+	)
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+	t.Logf("submitted runID=%s", runID)
+
+	finalExec := waitTerminal(t, b, runID)
+	if finalExec.Status != model.PhaseSucceeded {
+		t.Fatalf("expected Succeeded, got %s", finalExec.Status)
+	}
+
+	// Verify workflow-level hooks
+	for _, ht := range []hook.Type{hook.OnStart, hook.OnSuccess, hook.OnExit} {
+		if !notifier.hasEvent(hook.ScopeWorkflow, ht) {
+			t.Errorf("missing workflow hook %s", ht)
+		}
+	}
+
+	// Verify task-level hooks: OnStart, OnSuccess, OnExit for each of 2 tasks
+	for _, ht := range []hook.Type{hook.OnStart, hook.OnSuccess, hook.OnExit} {
+		count := notifier.countEvents(hook.ScopeTask, ht)
+		if count < 2 {
+			t.Errorf("expected at least 2 task %s events, got %d", ht, count)
+		}
+	}
+
+	// Verify event metadata: all events should carry the workflow run ID
+	for _, ev := range notifier.Events() {
+		if ev.WorkflowRunID == "" {
+			t.Errorf("event %s/%s missing WorkflowRunID", ev.Scope, ev.HookType)
+		}
+		if ev.Scope == hook.ScopeTask && ev.TaskName == "" {
+			t.Errorf("task event %s missing TaskName", ev.HookType)
+		}
+		if ev.Template != "hook-task" {
+			t.Errorf("event %s/%s: expected template hook-task, got %s", ev.Scope, ev.HookType, ev.Template)
+		}
+	}
+
+	// ErrorSink should have no critical errors
+	for _, ec := range sink.Errors() {
+		if ec.Severity >= errsink.SeverityError {
+			t.Errorf("unexpected error: operation=%s severity=%d", ec.Operation, ec.Severity)
+		}
+	}
+
+	t.Logf("captured %d hook events total", len(notifier.Events()))
+	for _, ev := range notifier.Events() {
+		t.Logf("  scope=%-10s type=%-12s workflow=%s task=%s", ev.Scope, ev.HookType, ev.WorkflowRunID, ev.TaskName)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestHooksSuspendResume — verifies OnSuspend and OnResume hooks fire during
+// suspend/resume lifecycle.
+//
+// Workflow: 25-hooks-suspend-resume.json
+//   - Task "approval": hooks onStart, onSuspend, onResume, onSuccess, onExit
+//
+// Expected events (task scope):
+//   - OnStart → OnSuspend → OnResume → OnSuccess → OnExit
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestHooksSuspendResume(t *testing.T) {
+	const wfPath = "examples/25-hooks-suspend-resume.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	notifier := &testNotifier{}
+	b := newEngineBundle(t, 30, aether.WithHookNotifier(notifier))
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+
+	// Wait for task to suspend
+	suspendedTask := waitTaskPhase(t, b, runID, "approval", model.PhaseSuspended)
+	t.Logf("task %q suspended, taskRunID=%s", suspendedTask.TaskName, suspendedTask.RunID)
+
+	// Verify OnSuspend fired
+	if !notifier.hasEvent(hook.ScopeTask, hook.OnSuspend) {
+		t.Error("missing task OnSuspend hook after suspend")
+	}
+
+	// Resume the task
+	resumePayload := map[string]any{
+		"approver":    "test-user",
+		resumedMarker: true,
+	}
+	if err := b.eng.Resume(b.ctx, runID, suspendedTask.RunID, resumePayload); err != nil {
+		t.Fatalf("resume task: %v", err)
+	}
+
+	// Wait for workflow to complete
+	finalExec := waitTerminal(t, b, runID)
+	if finalExec.Status != model.PhaseSucceeded {
+		t.Fatalf("expected Succeeded, got %s", finalExec.Status)
+	}
+
+	// Verify the full lifecycle of task hooks
+	for _, ht := range []hook.Type{hook.OnStart, hook.OnSuspend, hook.OnResume, hook.OnSuccess, hook.OnExit} {
+		if !notifier.hasEvent(hook.ScopeTask, ht) {
+			t.Errorf("missing task hook %s", ht)
+		}
+	}
+
+	t.Logf("captured %d hook events total", len(notifier.Events()))
+	for _, ev := range notifier.Events() {
+		t.Logf("  scope=%-10s type=%-12s task=%s", ev.Scope, ev.HookType, ev.TaskName)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestHooksCancel — verifies OnCancel and OnExit hooks fire when a workflow
+// is cancelled.
+//
+// Workflow: 26-hooks-cancel.json
+//   - Workflow hooks: onStart, onCancel, onExit
+//   - Task "wait" hooks: onCancel, onExit
+//
+// Expected:
+//   - Workflow: OnStart, OnCancel, OnExit
+//   - Task "wait": OnCancel, OnExit (task-level cancel hooks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestHooksCancel(t *testing.T) {
+	const wfPath = "examples/26-hooks-cancel.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	notifier := &testNotifier{}
+	b := newEngineBundle(t, 30, aether.WithHookNotifier(notifier))
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+
+	// Wait for "wait" task to suspend
+	_ = waitTaskPhase(t, b, runID, "wait", model.PhaseSuspended)
+	t.Logf("task wait suspended; cancelling workflow...")
+
+	// Cancel the workflow
+	if err := b.eng.Cancel(b.ctx, runID); err != nil {
+		t.Fatalf("cancel workflow: %v", err)
+	}
+
+	// Wait for terminal state
+	finalExec := waitTerminal(t, b, runID)
+	if finalExec.Status != model.PhaseCancelled {
+		t.Fatalf("expected Cancelled, got %s", finalExec.Status)
+	}
+
+	// Verify workflow-level cancel hooks
+	if !notifier.hasEvent(hook.ScopeWorkflow, hook.OnStart) {
+		t.Error("missing workflow OnStart hook")
+	}
+	if !notifier.hasEvent(hook.ScopeWorkflow, hook.OnCancel) {
+		t.Error("missing workflow OnCancel hook")
+	}
+	if !notifier.hasEvent(hook.ScopeWorkflow, hook.OnExit) {
+		t.Error("missing workflow OnExit hook")
+	}
+
+	// Verify task-level cancel hooks for "wait"
+	found := false
+	for _, ev := range notifier.Events() {
+		if ev.Scope == hook.ScopeTask && ev.HookType == hook.OnCancel && ev.TaskName == "wait" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("missing task OnCancel hook for task 'wait'")
+	}
+
+	t.Logf("captured %d hook events total", len(notifier.Events()))
+	for _, ev := range notifier.Events() {
+		t.Logf("  scope=%-10s type=%-12s workflow=%s task=%s", ev.Scope, ev.HookType, ev.WorkflowRunID, ev.TaskName)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestHooksInvalidTemplate — verifies that Submit rejects a workflow whose
+// hook references a non-task template (DAG).
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestHooksInvalidTemplate(t *testing.T) {
+	const wfPath = "examples/27-hooks-invalid-template.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	b := newEngineBundle(t, 10)
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	_, err = b.eng.Submit(b.ctx, &wf)
+	if err == nil {
+		t.Fatal("expected Submit to fail for hook referencing DAG template, got nil")
+	}
+	t.Logf("submit correctly rejected: %v", err)
+
+	// Verify the error mentions the hook or template issue
+	errStr := err.Error()
+	if !strings.Contains(errStr, "hook") && !strings.Contains(errStr, "template") {
+		t.Errorf("error should mention hook/template issue, got: %s", errStr)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestErrorSinkIntegration — verifies that the ErrorSink receives reports
+// during normal operation without any critical errors.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestErrorSinkIntegration(t *testing.T) {
+	const wfPath = "examples/02-dag-linear.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	sink := &testErrorSink{}
+	b := newEngineBundle(t, 30, aether.WithErrorSink(sink))
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+
+	finalExec := waitTerminal(t, b, runID)
+	if finalExec.Status != model.PhaseSucceeded {
+		t.Fatalf("expected Succeeded, got %s", finalExec.Status)
+	}
+
+	// A successful workflow should have no Error/Critical severity reports
+	for _, ec := range sink.Errors() {
+		if ec.Severity >= errsink.SeverityError {
+			t.Errorf("unexpected error report: operation=%s severity=%d wfRunID=%s taskRunID=%s",
+				ec.Operation, ec.Severity, ec.WorkflowRunID, ec.TaskRunID)
+		}
+	}
+
+	if len(sink.Errors()) > 0 {
+		t.Logf("error sink received %d reports (all non-critical):", len(sink.Errors()))
+		for _, ec := range sink.Errors() {
+			t.Logf("  operation=%-25s severity=%d wfRunID=%s", ec.Operation, ec.Severity, ec.WorkflowRunID)
 		}
 	}
 }

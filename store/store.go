@@ -13,6 +13,15 @@ import (
 // ErrNotFound indicates the requested resource does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrTokenMismatch indicates that the write token passed to an Update method
+// does not match the current token in the store. This is the expected outcome
+// of optimistic-lock contention: another writer has already modified the record.
+//
+// Store implementations that enforce token-based concurrency control SHOULD
+// return an error wrapping ErrTokenMismatch so callers can distinguish normal
+// contention from infrastructure failures (network errors, I/O faults, etc.).
+var ErrTokenMismatch = errors.New("token mismatch")
+
 // Store is the aggregated storage interface. It is the single source of truth for all state.
 type Store interface {
 	WorkflowRunStore

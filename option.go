@@ -3,6 +3,7 @@ package aether
 import (
 	"github.com/BabySid/aether/artifact"
 	"github.com/BabySid/aether/broker"
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/hook"
@@ -84,6 +85,17 @@ func WithSecretStore(s secret.Store) Option {
 func WithHookNotifier(h hook.Notifier) Option {
 	return func(e *Engine) {
 		e.hookNotifier = h
+	}
+}
+
+// WithErrorSink sets the error observation sink (optional).
+// When configured, the engine reports internal errors (hook failures, store
+// errors in void callbacks, critical-path failures) to the sink for external
+// monitoring and alerting. The engine's scheduling behaviour is identical
+// regardless of whether an ErrorSink is configured.
+func WithErrorSink(s errsink.ErrorSink) Option {
+	return func(e *Engine) {
+		e.errorSink = s
 	}
 }
 

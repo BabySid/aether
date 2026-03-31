@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
@@ -72,6 +73,10 @@ func (e *Engine) createEligibleTasks(ctx context.Context, workflowRunID string, 
 			shouldRun, err := internal.EvalWhenCondition(ctx, task.When, e.exprEvaluator, siblings)
 			if err != nil {
 				// Treat evaluation errors as "skip" to avoid blocking the DAG.
+				e.reportError(ctx, err, errsink.ErrorContext{
+					WorkflowRunID: workflowRunID, TaskRunID: parentTR.RunID,
+					Operation: "createEligibleTasks.whenCondition", Severity: errsink.SeverityWarning,
+				})
 				toSkip = append(toSkip, task)
 				continue
 			}
@@ -253,7 +258,7 @@ func (e *Engine) dispatchLeafTask(ctx context.Context, workflowRunID string, wf 
 			WithResolvedInputs(parentInputs).
 			WithSiblingTaskRuns(siblingRuns).
 			Build()
-		binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
+		binder := binding.NewBinder(e.exprEvaluator, e.secretStore, e.errorSink)
 		resolvedInputs, err := binder.Bind(ctx, taskDecl.Inputs, callSiteArgs, env)
 		if err != nil {
 			return fmt.Errorf("resolve inputs for task %q: %w", tr.TaskName, err)
@@ -363,6 +368,6 @@ func (e *Engine) resolveDAGInputs(ctx context.Context, workflowRunID string, wf 
 		WithSiblingTaskRuns(siblingRuns).
 		Build()
 
-	binder := binding.NewBinder(e.exprEvaluator, e.secretStore)
+	binder := binding.NewBinder(e.exprEvaluator, e.secretStore, e.errorSink)
 	return binder.Bind(ctx, dagTmpl.DAG.Inputs, callSiteArgs, env)
 }
