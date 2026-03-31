@@ -38,8 +38,6 @@
 package binding
 
 import (
-	"encoding/json"
-
 	ivars "github.com/BabySid/aether/internal/vars"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
@@ -172,17 +170,4 @@ func (b *VarBuilder) Build(namespaces ...string) EvalVars {
 		}
 	}
 	return env
-}
-
-// unmarshalAny tries to decode raw JSON into a Go value.
-// On failure it returns the raw bytes as a string so callers always have something useful.
-func unmarshalAny(raw json.RawMessage) any {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return string(raw)
-	}
-	return v
 }

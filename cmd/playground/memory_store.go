@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
@@ -437,7 +436,7 @@ func (m *MemoryStore) GetWorkflowTemplate(_ context.Context, namespace, name str
 
 // --- SchemaStore ---
 
-func (m *MemoryStore) UpsertSchema(_ context.Context, workerID string, schema executor.ExecutorSchema) error {
+func (m *MemoryStore) UpsertSchema(_ context.Context, workerID string, schema model.ExecutorSchema) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := schema.Type + "::" + workerID

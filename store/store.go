@@ -7,7 +7,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
 )
 
@@ -100,7 +99,7 @@ type SchemaStore interface {
 	// workerID identifies the worker instance that reported this schema, allowing
 	// distinction between "active worker" and "orphan historical schema" after restart
 	// (workerID="" indicates an orphan loaded during recovery).
-	UpsertSchema(ctx context.Context, workerID string, schema executor.ExecutorSchema) error
+	UpsertSchema(ctx context.Context, workerID string, schema model.ExecutorSchema) error
 
 	// ListSchemas returns all persisted schemas and their associated workerIDs,
 	// used to rebuild the in-memory VersionedSchemaRegistry at startup.
@@ -118,7 +117,7 @@ type SchemaStore interface {
 // SchemaRecord is the persistence record unit of SchemaStore, carrying workerID metadata.
 type SchemaRecord struct {
 	WorkerID string
-	Schema   executor.ExecutorSchema
+	Schema   model.ExecutorSchema
 }
 
 // --- Persistent models ---

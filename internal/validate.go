@@ -106,6 +106,9 @@ func Validate(wf *model.Workflow) error {
 		}
 
 		if tmpl.Loop != nil {
+			if err := validateInputParamNames(name, tmpl.GetInputs()); err != nil {
+				return err
+			}
 			if err := validateLoop(wf, tmpl.Loop); err != nil {
 				return fmt.Errorf("template %q: %w", name, err)
 			}
@@ -157,6 +160,14 @@ func validateDAG(wf *model.Workflow, dag *model.DAG) error {
 		}
 		if task.Template != "" && FindTemplate(wf, task.Template) == nil {
 			return fmt.Errorf("task %q references unknown template %q", task.Name, task.Template)
+		}
+	}
+
+	// Validate entrypoints reference existing tasks.
+	epNames := extractEntrypointNames(dag)
+	for name := range epNames {
+		if !taskNames[name] {
+			return fmt.Errorf("entrypoint %q references unknown task", name)
 		}
 	}
 

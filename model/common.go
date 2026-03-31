@@ -111,3 +111,22 @@ type PhaseConditions struct {
 	Failed    string `json:"failed,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
+
+// ExecutorSchema is the self-description of an executor plugin.
+// Best practice: use executor.SchemaOf[ConfigStruct, OutputStruct]() to derive this
+// from Go struct types; avoid hand-writing field names as strings.
+type ExecutorSchema struct {
+	Type        string `json:"type"`                  // matches Plugin.Type()
+	Version     string `json:"version"`               // schema version, e.g. "1.0"
+	Description string `json:"description,omitempty"`
+
+	// Inputs declares the accepted input parameters (derived from Config struct).
+	// nil = accepts any inputs (permissive mode).
+	Inputs *Inputs `json:"inputs,omitempty"`
+
+	// Outputs declares the fixed set of output parameters produced by this executor.
+	//   non-nil → static outputs: engine validates task.outputs fields at submit time
+	//             and auto-fills task.outputs when omitted.
+	//   nil → dynamic outputs: fields are determined at runtime.
+	Outputs *ExecOutputs `json:"outputs,omitempty"`
+}

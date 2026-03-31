@@ -12,7 +12,6 @@ package broker
 import (
 	"context"
 
-	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
 )
 
@@ -106,7 +105,7 @@ type TaskAssignment struct {
 type WorkerRegistration struct {
 	WorkerID      string                    // unique worker instance id
 	ExecutorTypes []string                  // types this worker can handle
-	Schemas       []executor.ExecutorSchema // full schemas for each type
+	Schemas       []model.ExecutorSchema // full schemas for each type
 	Tags          map[string]string         // optional routing labels
 }
 

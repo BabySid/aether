@@ -331,10 +331,12 @@ func (e *Engine) resolveDAGInputs(ctx context.Context, workflowRunID string, wf 
 		return nil, nil
 	}
 
-	// Find call-site Arguments from the parent DAG task node (if any).
+	// Find call-site Arguments and parent TaskRun (if any).
 	var callSiteArgs *model.Arguments
+	var parentTR *store.TaskRun
 	if dagTR.ParentRunID != "" {
-		parentTR, err := e.store.GetTaskRun(ctx, dagTR.ParentRunID)
+		var err error
+		parentTR, err = e.store.GetTaskRun(ctx, dagTR.ParentRunID)
 		if err != nil {
 			return nil, fmt.Errorf("get parent for dag %q: %w", dagTR.TaskName, err)
 		}
@@ -346,13 +348,18 @@ func (e *Engine) resolveDAGInputs(ctx context.Context, workflowRunID string, wf 
 		}
 	}
 
-	// Build EvalVars: workflow-level args + sibling outputs.
+	// Build EvalVars: workflow-level args + parent inputs + sibling outputs.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, dagTR.ParentRunID)
 	if err != nil {
 		return nil, fmt.Errorf("list siblings for dag input binding %q: %w", dagTR.TaskName, err)
 	}
+	var parentInputs *model.Inputs
+	if parentTR != nil {
+		parentInputs = parentTR.Inputs
+	}
 	env := e.newVarBuilder().
 		WithWorkflowArgs(wf.Spec.Arguments).
+		WithResolvedInputs(parentInputs).
 		WithSiblingTaskRuns(siblingRuns).
 		Build()
 

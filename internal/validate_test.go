@@ -838,6 +838,69 @@ func TestValidate_TaskName_DNS1123(t *testing.T) {
 	assertContains(t, err.Error(), "DNS-1123")
 }
 
+func TestValidate_LoopInputParamName_Invalid(t *testing.T) {
+	wf := loopWorkflow(&model.Loop{
+		Body:  "exec-a",
+		Items: []any{1, 2},
+	})
+	wf.Spec.Templates[0].Loop.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "my_param"},
+		},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for loop input param name with underscore")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidate_LoopInputParamName_Valid(t *testing.T) {
+	wf := loopWorkflow(&model.Loop{
+		Body:  "exec-a",
+		Items: []any{1, 2},
+	})
+	wf.Spec.Templates[0].Loop.Inputs = &model.Inputs{
+		Parameters: []model.Parameter{
+			{Name: "my-param"},
+		},
+	}
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected valid loop input param name, got: %v", err)
+	}
+}
+
+func TestValidate_EntrypointReferencesUnknownTask(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[0].DAG.Entrypoints = "nonexistent"
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for entrypoint referencing unknown task")
+	}
+	assertContains(t, err.Error(), "unknown task")
+}
+
+func TestValidate_EntrypointReferencesValidTask(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[0].DAG.Entrypoints = wf.Spec.Templates[0].DAG.Tasks[0].Name
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected valid entrypoint, got: %v", err)
+	}
+}
+
+func TestValidate_EntrypointMultiple_OneInvalid(t *testing.T) {
+	wf := validWorkflow()
+	wf.Spec.Templates[0].DAG.Entrypoints = []any{
+		wf.Spec.Templates[0].DAG.Tasks[0].Name,
+		"ghost",
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error when one entrypoint references unknown task")
+	}
+	assertContains(t, err.Error(), "unknown task")
+}
+
 // --- Helpers ---
 
 // assertContains checks if s contains substr.

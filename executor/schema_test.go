@@ -47,7 +47,7 @@ type configStruct struct {
 type shellPlugin struct{}
 
 func (s *shellPlugin) Type() string { return "shell" }
-func (s *shellPlugin) Schema() ExecutorSchema {
+func (s *shellPlugin) Schema() model.ExecutorSchema {
 	return SchemaOf[DynamicOutputs, shellOutput]("shell", "1.0", "Shell executor")
 }
 

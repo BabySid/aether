@@ -16,11 +16,11 @@ type DynamicOutputs struct{}
 //
 //	C = config struct type (must be a struct; panics otherwise)
 //	O = output struct type; use executor.DynamicOutputs for dynamic-output executors
-func SchemaOf[C, O any](execType, version, description string) ExecutorSchema {
+func SchemaOf[C, O any](execType, version, description string) model.ExecutorSchema {
 	assertStructType[C]()
 	assertStructType[O]() // no-op for DynamicOutputs (empty struct)
 
-	return ExecutorSchema{
+	return model.ExecutorSchema{
 		Type:        execType,
 		Version:     version,
 		Description: description,

@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/BabySid/aether/broker"
@@ -69,7 +70,7 @@ func EvalPhaseConditions(
 	}
 	if result.ExecOutputs != nil {
 		for _, p := range result.ExecOutputs.Parameters {
-			env["outputs.parameters."+p.Name] = string(p.Value)
+			env["outputs.parameters."+p.Name] = unmarshalParam(p.Value)
 		}
 	}
 
@@ -92,6 +93,20 @@ func EvalPhaseConditions(
 
 	// No condition matched — return base phase derived from Code.
 	return basePhase
+}
+
+// unmarshalParam decodes a json.RawMessage into its native Go type
+// (float64 for numbers, string for strings, bool for booleans, etc.)
+// so that expression evaluation operates on real types instead of raw strings.
+func unmarshalParam(raw json.RawMessage) any {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	return v
 }
 
 // evalBool evaluates an expression and returns true if the result is truthy.
