@@ -213,24 +213,14 @@ func isDependencySatisfied(depStatus model.Phase, depTaskCO, dagCO *model.Contin
 	}
 }
 
-// MergeContinueOn merges task-level and DAG-level continueOn policies.
-// Task-level fields take precedence; DAG-level is the fallback.
+// MergeContinueOn returns the effective continueOn policy for a task.
+// If the task declares its own continueOn, it is used as-is (full override).
+// Otherwise the DAG-level default is used as a fallback.
 func MergeContinueOn(taskCO, dagCO *model.ContinueOn) *model.ContinueOn {
-	if taskCO == nil && dagCO == nil {
-		return nil
-	}
-	if taskCO == nil {
-		return dagCO
-	}
-	if dagCO == nil {
+	if taskCO != nil {
 		return taskCO
 	}
-	// Merge: task-level takes precedence via OR (task || dag)
-	return &model.ContinueOn{
-		Failed:  taskCO.Failed || dagCO.Failed,
-		Error:   taskCO.Error || dagCO.Error,
-		Timeout: taskCO.Timeout || dagCO.Timeout,
-	}
+	return dagCO
 }
 
 // EvalWhenCondition evaluates a task's "when" expression.

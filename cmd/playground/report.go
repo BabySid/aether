@@ -10,7 +10,6 @@ import (
 
 	aether "github.com/BabySid/aether"
 	"github.com/BabySid/aether/model"
-	"github.com/BabySid/aether/store"
 )
 
 // ReportData is passed to the HTML template.
@@ -70,30 +69,20 @@ func generateHTMLReport(data ReportData) string {
 			return d.Round(time.Millisecond).String()
 		},
 		"add":       func(a, b int) int { return a + b },
-		"taskCount": func(tasks []*store.TaskRun) int { return len(tasks) },
-		"terminalCount": func(tasks []*store.TaskRun) int {
+		"taskCount": func(tasks []aether.TaskExecution) int { return len(tasks) },
+		"terminalCount": func(tasks []aether.TaskExecution) int {
 			n := 0
 			for _, t := range tasks {
-				if t.Status != nil && t.Status.IsTerminal() {
+				if t.Status.IsTerminal() {
 					n++
 				}
 			}
 			return n
 		},
-		"taskPhase": func(t *store.TaskRun) model.Phase {
-			if t.Status == nil {
-				return ""
-			}
-			return *t.Status
-		},
-		"taskPath": func(t *store.TaskRun) string { return t.Scope + t.TaskName },
-		"taskMsg": func(t *store.TaskRun) string {
-			if t.Message == nil {
-				return ""
-			}
-			return *t.Message
-		},
-		"execPhase": func(e *aether.WorkflowExecution) model.Phase { return e.Phase() },
+		"taskPhase": func(t aether.TaskExecution) model.Phase { return t.Status },
+		"taskPath":  func(t aether.TaskExecution) string { return t.Scope + t.TaskName },
+		"taskMsg":   func(t aether.TaskExecution) string { return t.Message },
+		"execPhase": func(e *aether.WorkflowExecution) model.Phase { return e.Status },
 		// fmtParams renders a parameter list as "name=value" lines for table cells.
 		// Values longer than 40 chars are truncated; the full value is shown in title on hover.
 		"fmtParams": func(params []model.Parameter) template.HTML {

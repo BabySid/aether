@@ -115,17 +115,11 @@ func generateResult(
 			Scope:        t.Scope,
 			TemplateName: t.TemplateName,
 			TemplateType: t.TemplateType,
+			Phase:        t.Status,
+			Message:      t.Message,
+			RetryCount:   t.RetryCount,
 		}
 
-		if t.Status != nil {
-			rt.Phase = *t.Status
-		}
-		if t.Message != nil {
-			rt.Message = *t.Message
-		}
-		if t.RetryCount != nil {
-			rt.RetryCount = *t.RetryCount
-		}
 		if t.Inputs != nil {
 			rt.Inputs = toResultParams(t.Inputs.Parameters)
 		}
@@ -133,7 +127,6 @@ func generateResult(
 			rt.Outputs = toResultParams(t.Outputs.Parameters)
 		}
 		if t.Metrics != nil {
-			// Metrics fields are already formatted strings from the engine.
 			rt.StartedAt = t.Metrics.StartedAt
 			rt.FinishedAt = t.Metrics.FinishedAt
 			rt.Duration = t.Metrics.Duration
@@ -145,7 +138,7 @@ func generateResult(
 	return &PlaygroundResult{
 		RunID:     runID,
 		Workflow:  workflowPath,
-		Phase:     exec.Phase(),
+		Phase:     exec.Status,
 		ElapsedMs: elapsed.Milliseconds(),
 		StartTime: startTime.Format(resultTimeLayout),
 		Outputs:   wfOutputs,

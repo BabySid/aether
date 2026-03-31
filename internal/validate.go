@@ -29,7 +29,9 @@ func validateName(kind, name string) error {
 	return nil
 }
 
-// MaxNestingDepth is the maximum allowed static template nesting depth.
+// MaxNestingDepth is the absolute ceiling for static template nesting depth.
+// Users can lower the limit via spec.maxNestedDepth; this constant caps the
+// upper bound so that even an explicitly configured value cannot exceed it.
 const MaxNestingDepth = 10
 
 // Validate performs structural and semantic validation on a Workflow.
@@ -110,8 +112,13 @@ func Validate(wf *model.Workflow) error {
 		}
 	}
 
-	// Static nesting depth check from entrypoint
-	if err := validateNestingDepth(wf, wf.Spec.Entrypoint, 0); err != nil {
+	// Static nesting depth check from entrypoint.
+	// Use the spec-configured limit, capped by the absolute ceiling.
+	maxDepth := wf.Spec.MaxNestedDepth
+	if maxDepth <= 0 || maxDepth > MaxNestingDepth {
+		maxDepth = MaxNestingDepth
+	}
+	if err := validateNestingDepth(wf, wf.Spec.Entrypoint, 0, maxDepth); err != nil {
 		return err
 	}
 
@@ -231,10 +238,11 @@ func validateLoop(wf *model.Workflow, loop *model.Loop) error {
 }
 
 // validateNestingDepth walks the template reference tree and rejects
-// workflows whose static nesting exceeds MaxNestingDepth.
-func validateNestingDepth(wf *model.Workflow, tmplName string, depth int) error {
-	if depth > MaxNestingDepth {
-		return fmt.Errorf("template nesting depth exceeds maximum (%d)", MaxNestingDepth)
+// workflows whose static nesting exceeds maxDepth (derived from
+// spec.maxNestedDepth, capped by MaxNestingDepth).
+func validateNestingDepth(wf *model.Workflow, tmplName string, depth, maxDepth int) error {
+	if depth > maxDepth {
+		return fmt.Errorf("template nesting depth exceeds maximum (%d)", maxDepth)
 	}
 
 	tmpl := FindTemplate(wf, tmplName)
@@ -245,14 +253,14 @@ func validateNestingDepth(wf *model.Workflow, tmplName string, depth int) error 
 
 	if tmpl.DAG != nil {
 		for _, task := range tmpl.DAG.Tasks {
-			if err := validateNestingDepth(wf, task.Template, depth+1); err != nil {
+			if err := validateNestingDepth(wf, task.Template, depth+1, maxDepth); err != nil {
 				return err
 			}
 		}
 	}
 
 	if tmpl.Loop != nil && tmpl.Loop.Body != "" {
-		if err := validateNestingDepth(wf, tmpl.Loop.Body, depth+1); err != nil {
+		if err := validateNestingDepth(wf, tmpl.Loop.Body, depth+1, maxDepth); err != nil {
 			return err
 		}
 	}

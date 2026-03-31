@@ -129,13 +129,13 @@ loop:
 		if getErr != nil {
 			log.Fatalf("get workflow: %v", getErr)
 		}
-		if exec.Phase().IsTerminal() {
+		if exec.Status.IsTerminal() {
 			finalExec = exec
 			break loop
 		}
 		select {
 		case <-ctx.Done():
-			log.Printf("timeout waiting for workflow; last phase: %s", exec.Phase())
+			log.Printf("timeout waiting for workflow; last phase: %s", exec.Status)
 			finalExec = exec
 			break loop
 		case <-finishCh:
@@ -149,7 +149,7 @@ loop:
 
 	elapsed := time.Since(startTime)
 	log.Printf("workflow finished: phase=%s elapsed=%s progress=%s",
-		finalExec.Phase(), elapsed.Round(time.Millisecond), finalExec.Progress)
+		finalExec.Status, elapsed.Round(time.Millisecond), finalExec.Progress)
 
 	// --- 7. Collect snapshots ---
 	snapshots := memStore.Snapshots()

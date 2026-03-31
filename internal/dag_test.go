@@ -729,6 +729,27 @@ func TestFindReadyTasks_MixedContinueOnUpstreamOverridesDAG(t *testing.T) {
 	}
 }
 
+func TestFindReadyTasks_TaskContinueOnOverridesDAG(t *testing.T) {
+	// DAG-level: failed=true (lenient); upstream task a: failed=false (strict).
+	// Task-level should fully override DAG-level, so b must NOT be ready.
+	dag := &model.DAG{
+		ContinueOn: &model.ContinueOn{Failed: true},
+		Tasks: []model.Task{
+			{Name: "a", ContinueOn: &model.ContinueOn{Failed: false}},
+			{Name: "b", Dependencies: []string{"a"}},
+		},
+	}
+	existing := []*store.TaskRun{
+		{TaskName: "a", Status: phasePtr(model.PhaseFailed)},
+	}
+	ready := FindReadyTasks(dag, existing)
+	for _, r := range ready {
+		if r.Name == "b" {
+			t.Error("task-level continueOn{failed:false} should override DAG-level{failed:true}; b should not be ready")
+		}
+	}
+}
+
 func TestFindReadyTasks_TimeoutContinueOn(t *testing.T) {
 	// ContinueOn.timeout is on the upstream task a
 	dag := &model.DAG{

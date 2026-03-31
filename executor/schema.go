@@ -80,7 +80,7 @@ func reflectToParams[T any]() []model.Parameter {
 		}
 		name := parseJSONTagName(jsonTag) // "status_code,omitempty" → "status_code"
 		if name == "" {
-			name = f.Name // 无 json tag 时退化为 Go 字段名
+			name = f.Name // fallback to Go field name when no json tag
 		}
 		result = append(result, model.Parameter{
 			Name:        name,

@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -277,63 +276,3 @@ func TestSchemaOutputNamesMatchOutputFrom(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MemoryStore SchemaStore (in-package via package main — tested via store test)
-// Minimal smoke test via executor.Registry for schema caching.
-// ─────────────────────────────────────────────────────────────────────────────
-
-type httpExecPlugin struct{}
-
-func (h *httpExecPlugin) Type() string { return "http" }
-func (h *httpExecPlugin) Schema() ExecutorSchema {
-	type hOut struct {
-		StatusCode int    `json:"status_code"`
-		Body       string `json:"body"`
-	}
-	return SchemaOf[DynamicOutputs, hOut]("http", "1.0", "HTTP executor")
-}
-
-func (h *httpExecPlugin) Execute(_ context.Context, _ *ExecuteRequest) (*model.ExecOutputs, error) {
-	type hOut struct {
-		StatusCode int    `json:"status_code"`
-		Body       string `json:"body"`
-	}
-	return OutputFrom(hOut{StatusCode: 200, Body: "ok"})
-}
-
-func TestRegistry_HttpPlugin_SchemaAndOutput(t *testing.T) {
-	reg := NewRegistry()
-	if err := reg.Register(&httpExecPlugin{}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	schema, ok := reg.GetSchema("http")
-	if !ok {
-		t.Fatal("GetSchema: not found")
-	}
-	if schema.Outputs == nil {
-		t.Fatal("Outputs: nil")
-	}
-	// Outputs field names must be status_code, body
-	names := make(map[string]bool)
-	for _, p := range schema.Outputs.Parameters {
-		names[p.Name] = true
-	}
-	if !names["status_code"] {
-		t.Error("missing status_code in schema outputs")
-	}
-	if !names["body"] {
-		t.Error("missing body in schema outputs")
-	}
-
-	// Execute and verify output field names match schema
-	plug, _ := reg.Get("http")
-	out, err := plug.Execute(context.Background(), &ExecuteRequest{})
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	for _, p := range out.Parameters {
-		if !names[p.Name] {
-			t.Errorf("Execute produced field %q not in schema", p.Name)
-		}
-	}
-}

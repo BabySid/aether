@@ -40,7 +40,6 @@ import (
 	"github.com/BabySid/aether/broker"
 	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/model"
-	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/vars"
 )
 
@@ -167,7 +166,7 @@ func waitTerminal(t *testing.T, b *engineBundle, runID string) *aether.WorkflowE
 		if err != nil {
 			t.Fatalf("get workflow: %v", err)
 		}
-		if exec.Phase().IsTerminal() {
+		if exec.Status.IsTerminal() {
 			return exec
 		}
 		select {
@@ -183,8 +182,8 @@ func waitTerminal(t *testing.T, b *engineBundle, runID string) *aether.WorkflowE
 }
 
 // waitTaskPhase polls until the named task reaches the expected phase or ctx expires.
-// Returns the task's RunID so the caller can Resume it.
-func waitTaskPhase(t *testing.T, b *engineBundle, runID string, taskName string, wantPhase model.Phase) *store.TaskRun {
+// Returns the matching TaskExecution so the caller can use its RunID for Resume.
+func waitTaskPhase(t *testing.T, b *engineBundle, runID string, taskName string, wantPhase model.Phase) aether.TaskExecution {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -195,17 +194,17 @@ func waitTaskPhase(t *testing.T, b *engineBundle, runID string, taskName string,
 			t.Fatalf("get workflow: %v", err)
 		}
 		for _, tr := range exec.Tasks {
-			if tr.TaskName == taskName && tr.Status != nil && *tr.Status == wantPhase {
+			if tr.TaskName == taskName && tr.Status == wantPhase {
 				return tr
 			}
 		}
 		select {
 		case <-deadline:
 			t.Fatalf("timeout waiting for task %q to reach phase %s", taskName, wantPhase)
-			return nil
+			return aether.TaskExecution{}
 		case <-b.ctx.Done():
 			t.Fatalf("context done before task %q reached phase %s", taskName, wantPhase)
-			return nil
+			return aether.TaskExecution{}
 		case <-b.finishCh:
 			for len(b.finishCh) > 0 {
 				<-b.finishCh
@@ -262,7 +261,7 @@ func jsonEqual(a, b json.RawMessage) bool {
 }
 
 // taskNames returns a display list of task names for error messages.
-func taskNames(tasks []*store.TaskRun) []string {
+func taskNames(tasks []aether.TaskExecution) []string {
 	names := make([]string, len(tasks))
 	for i, t := range tasks {
 		names[i] = t.TaskName
@@ -275,7 +274,7 @@ func assertExecution(t *testing.T, exec *aether.WorkflowExecution, assert *Workf
 	t.Helper()
 
 	// 1. workflow phase
-	if got := string(exec.Phase()); got != assert.ExpectPhase {
+	if got := string(exec.Status); got != assert.ExpectPhase {
 		t.Errorf("workflow phase: got %q, want %q", got, assert.ExpectPhase)
 	}
 
@@ -287,8 +286,8 @@ func assertExecution(t *testing.T, exec *aether.WorkflowExecution, assert *Workf
 	}
 
 	// 3. per-task expectations
-	// Build index: taskName -> last TaskRun (last wins for retries)
-	taskByName := make(map[string]*store.TaskRun)
+	// Build index: taskName -> last TaskExecution (last wins for retries)
+	taskByName := make(map[string]aether.TaskExecution)
 	for _, task := range exec.Tasks {
 		taskByName[task.TaskName] = task
 	}
@@ -302,18 +301,13 @@ func assertExecution(t *testing.T, exec *aether.WorkflowExecution, assert *Workf
 
 		// 3a. task phase
 		if ta.ExpectPhase != "" {
-			var gotPhase model.Phase
-			if task.Status != nil {
-				gotPhase = *task.Status
-			}
-			if string(gotPhase) != ta.ExpectPhase {
-				t.Errorf("task %q phase: got %q, want %q", ta.TaskName, gotPhase, ta.ExpectPhase)
+			if string(task.Status) != ta.ExpectPhase {
+				t.Errorf("task %q phase: got %q, want %q", ta.TaskName, task.Status, ta.ExpectPhase)
 			}
 		}
 
 		// 3b. output parameters (subset match)
 		if len(ta.ExpectOutputs) > 0 {
-			// build output index
 			outByName := make(map[string]json.RawMessage)
 			if task.Outputs != nil {
 				for _, p := range task.Outputs.Parameters {
@@ -369,12 +363,9 @@ func TestIntegration(t *testing.T) {
 			assertExecution(t, exec, &assert)
 
 			// Always log summary for visibility.
-			t.Logf("workflow=%s phase=%s tasks=%d", name, exec.Phase(), len(exec.Tasks))
+			t.Logf("workflow=%s phase=%s tasks=%d", name, exec.Status, len(exec.Tasks))
 			for _, task := range exec.Tasks {
-				phase := model.Phase("")
-				if task.Status != nil {
-					phase = *task.Status
-				}
+				phase := task.Status
 				var outParts []string
 				if task.Outputs != nil {
 					for _, p := range task.Outputs.Parameters {
@@ -443,7 +434,7 @@ func TestAwaitSuspend(t *testing.T) {
 
 	// Step 3: wait for workflow to complete.
 	finalExec := waitTerminal(t, b, runID)
-	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Status, len(finalExec.Tasks))
 
 	// Build assertion matching expected outcomes.
 	// Note: resume payload keys (approver, __resumed) are echoed back as inputs.
@@ -483,10 +474,7 @@ func TestAwaitSuspend(t *testing.T) {
 
 	// Log all task outputs for visibility.
 	for _, task := range finalExec.Tasks {
-		phase := model.Phase("")
-		if task.Status != nil {
-			phase = *task.Status
-		}
+		phase := task.Status
 		var outParts []string
 		if task.Outputs != nil {
 			for _, p := range task.Outputs.Parameters {
@@ -543,7 +531,7 @@ func TestTaskTimeout(t *testing.T) {
 
 	// Do NOT resume — let the task timeout naturally.
 	finalExec := waitTerminal(t, b, runID)
-	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Status, len(finalExec.Tasks))
 
 	// The workflow ends in Succeeded: wait-external timed out (Timeout) but its
 	// continueOn.timeout=true means the timeout is tolerated by the DAG aggregation.
@@ -577,10 +565,7 @@ func TestTaskTimeout(t *testing.T) {
 	assertExecution(t, finalExec, assertion)
 
 	for _, task := range finalExec.Tasks {
-		phase := model.Phase("")
-		if task.Status != nil {
-			phase = *task.Status
-		}
+		phase := task.Status
 		var outParts []string
 		if task.Outputs != nil {
 			for _, p := range task.Outputs.Parameters {
@@ -664,7 +649,7 @@ func TestCustomVars(t *testing.T) {
 	t.Logf("submitted runID=%s", runID)
 
 	finalExec := waitTerminal(t, b, runID)
-	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Status, len(finalExec.Tasks))
 
 	// Build assertion: os and arch come from runtime, cluster/region from DeploymentSource.
 	osVal, _ := json.Marshal(runtime.GOOS)
@@ -687,10 +672,7 @@ func TestCustomVars(t *testing.T) {
 	assertExecution(t, finalExec, assertion)
 
 	for _, task := range finalExec.Tasks {
-		phase := model.Phase("")
-		if task.Status != nil {
-			phase = *task.Status
-		}
+		phase := task.Status
 		var outParts []string
 		if task.Outputs != nil {
 			for _, p := range task.Outputs.Parameters {
@@ -740,7 +722,7 @@ func TestOSBranch(t *testing.T) {
 	t.Logf("submitted runID=%s", runID)
 
 	finalExec := waitTerminal(t, b, runID)
-	t.Logf("workflow phase=%s tasks=%d", finalExec.Phase(), len(finalExec.Tasks))
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Status, len(finalExec.Tasks))
 
 	// Determine expected branch phases based on current runtime OS.
 	macPhase, linuxPhase := "Skipped", "Skipped"
@@ -775,10 +757,7 @@ func TestOSBranch(t *testing.T) {
 	assertExecution(t, finalExec, assertion)
 
 	for _, task := range finalExec.Tasks {
-		phase := model.Phase("")
-		if task.Status != nil {
-			phase = *task.Status
-		}
+		phase := task.Status
 		var outParts []string
 		if task.Outputs != nil {
 			for _, p := range task.Outputs.Parameters {

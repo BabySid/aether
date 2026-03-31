@@ -19,7 +19,7 @@ type Store interface {
 	WorkflowRunStore
 	TaskRunStore
 	WorkflowTemplateStore
-	SchemaStore // 新增
+	SchemaStore
 	Close() error
 }
 
@@ -91,28 +91,31 @@ type WorkflowTemplateStore interface {
 	GetWorkflowTemplate(ctx context.Context, namespace, name string) (*model.WorkflowTemplate, error)
 }
 
-// SchemaStore 负责 executor schema 的持久化。
-// 业务逻辑（版本兼容检测、活跃 worker 追踪）由 VersionedSchemaRegistry 在内存中完成；
-// 此接口只提供原始 schema 的 CRUD，供 master 重启后重新加载。
+// SchemaStore handles persistence of executor schemas.
+// Business logic (version compatibility checks, active worker tracking) is handled
+// in-memory by VersionedSchemaRegistry; this interface only provides raw schema CRUD,
+// used to reload state after a master restart.
 type SchemaStore interface {
-	// UpsertSchema 持久化（新增或覆盖）一个 executor 的 schema。
-	// workerID 标识上报该 schema 的 worker 实例，便于重启后区分"有活跃 worker"与
-	// "历史 schema 孤本"（workerID="" 表示恢复加载时写入的孤本）。
+	// UpsertSchema persists (inserts or overwrites) an executor's schema.
+	// workerID identifies the worker instance that reported this schema, allowing
+	// distinction between "active worker" and "orphan historical schema" after restart
+	// (workerID="" indicates an orphan loaded during recovery).
 	UpsertSchema(ctx context.Context, workerID string, schema executor.ExecutorSchema) error
 
-	// ListSchemas 返回所有已持久化的 schema 及其关联的 workerID，
-	// 供启动时重建内存 VersionedSchemaRegistry。
+	// ListSchemas returns all persisted schemas and their associated workerIDs,
+	// used to rebuild the in-memory VersionedSchemaRegistry at startup.
 	ListSchemas(ctx context.Context) ([]SchemaRecord, error)
 
-	// DeleteSchema 删除符合条件的 schema 记录。
-	// execType 和 workerID 均为可选过滤条件（空串表示不限制），取交集匹配：
-	//   DeleteSchema(ctx, "echo",   ""    ) → 删除 echo 的全部记录（GC 驱逐）
-	//   DeleteSchema(ctx, "",       "w-1" ) → 删除 worker-1 的全部记录（worker 下线）
-	//   DeleteSchema(ctx, "echo",   "w-1" ) → 精确删除 worker-1 上报的 echo schema
+	// DeleteSchema removes schema records matching the given filters.
+	// Both execType and workerID are optional filters (empty string means no restriction);
+	// they are combined with AND semantics:
+	//   DeleteSchema(ctx, "echo",   ""    ) → delete all records for echo (GC eviction)
+	//   DeleteSchema(ctx, "",       "w-1" ) → delete all records for worker-1 (worker offline)
+	//   DeleteSchema(ctx, "echo",   "w-1" ) → delete exactly the echo schema reported by worker-1
 	DeleteSchema(ctx context.Context, execType, workerID string) error
 }
 
-// SchemaRecord 是 SchemaStore 的持久化记录单元，携带 workerID 元数据。
+// SchemaRecord is the persistence record unit of SchemaStore, carrying workerID metadata.
 type SchemaRecord struct {
 	WorkerID string
 	Schema   executor.ExecutorSchema

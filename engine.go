@@ -8,9 +8,9 @@ import (
 
 	"github.com/BabySid/aether/artifact"
 	"github.com/BabySid/aether/broker"
-	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/expr"
 	"github.com/BabySid/aether/hook"
+	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
@@ -179,21 +179,53 @@ func (e *Engine) Get(ctx context.Context, workflowID string) (*WorkflowExecution
 		return nil, fmt.Errorf("aether: list task runs: %w", err)
 	}
 
-	// 3. Assemble WorkflowExecution
+	// 3. Project store types into public read-only types
 	exec := &WorkflowExecution{
-		WorkflowRun: run,
-		Tasks:       taskRuns,
+		RunID:     run.RunID,
+		Outputs:   run.Outputs,
+		Metrics:   run.Metrics,
+		CreatedAt: run.CreatedAt,
+	}
+	if run.Status != nil {
+		exec.Status = *run.Status
+	}
+	if run.Message != nil {
+		exec.Message = *run.Message
 	}
 
-	totalTasks := len(taskRuns)
+	tasks := make([]TaskExecution, len(taskRuns))
 	completedTasks := 0
-	for _, tr := range taskRuns {
-		if tr.Status != nil && tr.Status.IsTerminal() {
-			completedTasks++
+	for i, tr := range taskRuns {
+		tasks[i] = TaskExecution{
+			RunID:         tr.RunID,
+			WorkflowRunID: tr.WorkflowRunID,
+			ParentRunID:   tr.ParentRunID,
+			Depth:         tr.Depth,
+			Scope:         tr.Scope,
+			TaskName:      tr.TaskName,
+			TemplateName:  tr.TemplateName,
+			TemplateType:  tr.TemplateType,
+			CreatedAt:     tr.CreatedAt,
+			Inputs:        tr.Inputs,
+			Outputs:       tr.Outputs,
+			Metrics:       tr.Metrics,
+		}
+		if tr.Status != nil {
+			tasks[i].Status = *tr.Status
+			if tr.Status.IsTerminal() {
+				completedTasks++
+			}
+		}
+		if tr.Message != nil {
+			tasks[i].Message = *tr.Message
+		}
+		if tr.RetryCount != nil {
+			tasks[i].RetryCount = *tr.RetryCount
 		}
 	}
-	if totalTasks > 0 {
-		exec.Progress = fmt.Sprintf("%d/%d", completedTasks, totalTasks)
+	exec.Tasks = tasks
+	if len(tasks) > 0 {
+		exec.Progress = fmt.Sprintf("%d/%d", completedTasks, len(tasks))
 	}
 
 	return exec, nil

@@ -1,34 +1,45 @@
 package aether
 
 import (
+	"time"
+
 	"github.com/BabySid/aether/model"
-	"github.com/BabySid/aether/store"
 )
 
-// WorkflowExecution is the return type of Engine.Get.
-// It embeds store.WorkflowRun (all persisted fields) and adds two computed fields.
-// Token (internal write-token) is intentionally not re-exported — callers should
-// never need to supply a token when reading execution state.
+// WorkflowExecution is the read-only return type of Engine.Get.
+// It contains only the fields that external callers need to observe workflow
+// state. Internal store fields (Token, Deadline, raw Workflow JSON, UpdatedAt)
+// are deliberately excluded to keep the public API stable and decoupled from
+// storage internals.
 type WorkflowExecution struct {
-	*store.WorkflowRun                  // all WorkflowRun fields (RunID, Status, Message, Outputs, Metrics, …)
-	Progress           string           // "completed/total" task count, empty when no tasks
-	Tasks              []*store.TaskRun // all TaskRuns for this workflow run, in creation order
+	RunID     string
+	Status    model.Phase    // zero value ("") when not yet set
+	Message   string         // human-readable status message
+	Outputs   *model.Outputs // workflow-level outputs, nil until finalized
+	Metrics   *model.Metrics // workflow-level timing metrics
+	CreatedAt time.Time
+	Progress  string           // "completed/total", empty when no tasks
+	Tasks     []TaskExecution  // all task runs, in creation order
 }
 
-// Phase returns the current phase of the workflow run.
-// Returns the zero value (empty string) when Status is nil.
-func (e *WorkflowExecution) Phase() model.Phase {
-	if e.WorkflowRun == nil || e.Status == nil {
-		return ""
-	}
-	return *e.Status
-}
+// TaskExecution is the read-only view of a single task run within a workflow.
+type TaskExecution struct {
+	// Immutable
+	RunID         string
+	WorkflowRunID string
+	ParentRunID   string // "" = top-level scope
+	Depth         int
+	Scope         string
+	TaskName      string
+	TemplateName  string
+	TemplateType  string
+	CreatedAt     time.Time
 
-// Msg returns the human-readable message of the workflow run.
-// Returns empty string when Message is nil.
-func (e *WorkflowExecution) Msg() string {
-	if e.WorkflowRun == nil || e.Message == nil {
-		return ""
-	}
-	return *e.Message
+	// Mutable (already dereferenced from store pointer types)
+	Status     model.Phase
+	Message    string
+	Inputs     *model.Inputs
+	Outputs    *model.Outputs
+	Metrics    *model.Metrics
+	RetryCount int
 }

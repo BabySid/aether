@@ -412,6 +412,52 @@ func TestValidate_NestingDepthExceedsLimit(t *testing.T) {
 	assertContains(t, err.Error(), "nesting depth exceeds maximum")
 }
 
+func TestValidate_NestingDepthRespectsSpec(t *testing.T) {
+	// Build a chain of depth 4: dag-0 → dag-1 → dag-2 → dag-3 → leaf
+	// With spec.maxNestedDepth=3 this should fail (depth 4 > 3).
+	templates := make([]model.Template, 0, 5)
+	for i := 0; i < 4; i++ {
+		next := fmt.Sprintf("dag-%d", i+1)
+		if i == 3 {
+			next = "leaf"
+		}
+		templates = append(templates, model.Template{
+			DAG: &model.DAG{
+				Name:  fmt.Sprintf("dag-%d", i),
+				Tasks: []model.Task{{Name: "step", Template: next}},
+			},
+		})
+	}
+	templates = append(templates, model.Template{
+		Task: &model.Task{
+			Name:     "leaf",
+			Executor: &model.Executor{Type: "script"},
+		},
+	})
+
+	wf := &model.Workflow{
+		APIVersion: "aether/v1",
+		Kind:       "Workflow",
+		Metadata:   model.Metadata{Name: "spec-depth-wf"},
+		Spec: model.WorkflowSpec{
+			Entrypoint:     "dag-0",
+			MaxNestedDepth: 3,
+			Templates:      templates,
+		},
+	}
+	err := Validate(wf)
+	if err == nil {
+		t.Fatal("expected error for nesting depth exceeding spec.maxNestedDepth=3")
+	}
+	assertContains(t, err.Error(), "nesting depth exceeds maximum (3)")
+
+	// Raising the limit to 4 should make it pass.
+	wf.Spec.MaxNestedDepth = 4
+	if err := Validate(wf); err != nil {
+		t.Fatalf("expected nesting at spec limit to pass, got: %v", err)
+	}
+}
+
 func TestValidate_NestingDepthViaLoop(t *testing.T) {
 	// dag-entry → loop-tmpl(body=inner-dag) → inner-dag(task→leaf)
 	// depth chain: entry(0) → loop(1) → inner-dag(2) → leaf(3)

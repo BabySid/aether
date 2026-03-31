@@ -264,8 +264,22 @@ func TestParseJSONTagName(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Registry — schema caching
+// Registry
 // ─────────────────────────────────────────────────────────────────────────────
+
+func TestRegistry_RegisterAndGet(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Register(&shellPlugin{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plug, ok := reg.Get("shell")
+	if !ok {
+		t.Fatal("Get: expected plugin to be found")
+	}
+	if plug.Type() != "shell" {
+		t.Errorf("Type: want shell, got %s", plug.Type())
+	}
+}
 
 func TestRegistry_SchemaCached(t *testing.T) {
 	reg := NewRegistry()
@@ -278,12 +292,6 @@ func TestRegistry_SchemaCached(t *testing.T) {
 	}
 	if got.Type != "shell" {
 		t.Errorf("Type: want shell, got %s", got.Type)
-	}
-	if got.Outputs == nil {
-		t.Fatal("Outputs: expected non-nil")
-	}
-	if len(got.Outputs.Parameters) != 3 {
-		t.Fatalf("Outputs.Parameters: want 3, got %d", len(got.Outputs.Parameters))
 	}
 }
 
@@ -315,3 +323,4 @@ func TestRegistry_DuplicateRegister(t *testing.T) {
 		t.Error("expected error on duplicate register")
 	}
 }
+

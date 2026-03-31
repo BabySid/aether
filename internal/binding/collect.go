@@ -6,9 +6,9 @@ import (
 	"fmt"
 
 	"github.com/BabySid/aether/expr"
+	ivars "github.com/BabySid/aether/internal/vars"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
-	"github.com/BabySid/aether/vars"
 )
 
 // Collector assembles container-level outputs from child task run results.
@@ -52,7 +52,7 @@ func (c *Collector) CollectDAGOutputs(
 	for k, v := range env {
 		resolvedEnv[k] = v
 	}
-	for k, v := range (&vars.SiblingTaskRunsSource{Runs: children}).Vars() {
+	for k, v := range (&ivars.SiblingTaskRunsSource{Runs: children}).Vars() {
 		resolvedEnv[k] = v
 	}
 

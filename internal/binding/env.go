@@ -40,6 +40,7 @@ package binding
 import (
 	"encoding/json"
 
+	ivars "github.com/BabySid/aether/internal/vars"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/vars"
@@ -111,7 +112,7 @@ func (b *VarBuilder) WithSource(s vars.Source) *VarBuilder {
 //
 // Convenience wrapper around WithSource(&vars.WorkflowArgsSource{Args: args}).
 func (b *VarBuilder) WithWorkflowArgs(args *model.Arguments) *VarBuilder {
-	return b.WithSource(&vars.WorkflowArgsSource{Args: args})
+	return b.WithSource(&ivars.WorkflowArgsSource{Args: args})
 }
 
 // WithResolvedInputs injects the current template's already-bound inputs into the env.
@@ -120,7 +121,7 @@ func (b *VarBuilder) WithWorkflowArgs(args *model.Arguments) *VarBuilder {
 //
 // Convenience wrapper around WithSource(&vars.ResolvedInputsSource{Inputs: inputs}).
 func (b *VarBuilder) WithResolvedInputs(inputs *model.Inputs) *VarBuilder {
-	return b.WithSource(&vars.ResolvedInputsSource{Inputs: inputs})
+	return b.WithSource(&ivars.ResolvedInputsSource{Inputs: inputs})
 }
 
 // WithSiblingTaskRuns injects same-scope sibling task run state and outputs.
@@ -133,7 +134,7 @@ func (b *VarBuilder) WithResolvedInputs(inputs *model.Inputs) *VarBuilder {
 //
 // Convenience wrapper around WithSource(&vars.SiblingTaskRunsSource{Runs: runs}).
 func (b *VarBuilder) WithSiblingTaskRuns(runs []*store.TaskRun) *VarBuilder {
-	return b.WithSource(&vars.SiblingTaskRunsSource{Runs: runs})
+	return b.WithSource(&ivars.SiblingTaskRunsSource{Runs: runs})
 }
 
 // WithLoopIteration injects loop iteration parameters.
@@ -145,7 +146,7 @@ func (b *VarBuilder) WithSiblingTaskRuns(runs []*store.TaskRun) *VarBuilder {
 //
 // Convenience wrapper around WithSource(&vars.LoopIterationSource{Index: index, Item: item}).
 func (b *VarBuilder) WithLoopIteration(index int, item any) *VarBuilder {
-	return b.WithSource(&vars.LoopIterationSource{Index: index, Item: item})
+	return b.WithSource(&ivars.LoopIterationSource{Index: index, Item: item})
 }
 
 // Build constructs an EvalVars snapshot from registered Sources.

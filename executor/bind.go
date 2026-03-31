@@ -12,9 +12,9 @@ import (
 // The json tag on each field becomes the parameter.Name; the field value is JSON-serialised.
 // Fields tagged with json:"-" are skipped.
 //
-// 约束：output 必须是扁平 struct（flat struct），不支持嵌入 struct（anonymous field）、
-// 指针字段或嵌套 struct。所有字段应为基础类型、string、[]T、map[string]T 或 any。
-// 这一约束确保 OutputFrom 与 deriveParamSchema 的反射逻辑保持一致。
+// Constraint: output must be a flat struct — no embedded (anonymous) fields, pointer fields,
+// or nested structs. All fields should be primitive types, string, []T, map[string]T, or any.
+// This constraint ensures OutputFrom and deriveParamSchema share consistent reflection logic.
 //
 // Example:
 //
@@ -52,18 +52,18 @@ func OutputFrom(output any) (*model.ExecOutputs, error) {
 // against the json tag of the corresponding struct field.
 // Phase 2 extension — not required for core Output binding.
 //
-// 注意：model.Parameter.Value 的类型决定了此处的处理方式：
-//   - 若 Value 是 json.RawMessage → 直接使用，无需再次 Marshal
-//   - 若 Value 是 any（interface{}）→ 需要 Marshal 再 Unmarshal
+// Note: the handling depends on the type of model.Parameter.Value:
+//   - If Value is json.RawMessage → use directly, no need to re-Marshal
+//   - If Value is any (interface{}) → must Marshal then Unmarshal
 //
-// 当前实现假设 Value 为 json.RawMessage（与 OutputFrom 产出一致）。
+// The current implementation assumes Value is json.RawMessage (consistent with OutputFrom output).
 func BindInputs(inputs *model.Inputs, dst any) error {
 	if inputs == nil {
 		return nil
 	}
 	index := make(map[string]json.RawMessage, len(inputs.Parameters))
 	for _, p := range inputs.Parameters {
-		// p.Value 已是 json.RawMessage（[]byte），直接使用
+		// p.Value is already json.RawMessage ([]byte), use directly
 		index[p.Name] = p.Value
 	}
 	t := reflect.TypeOf(dst).Elem()
