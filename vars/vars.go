@@ -18,7 +18,9 @@
 //
 // # Custom sources
 //
-// Implement Source to add custom variable namespaces:
+// Implement Source to add custom variable namespaces.
+//
+// ## Static value object (per-run data injected at construction)
 //
 //	type TenantSource struct {
 //	    TenantID string
@@ -36,12 +38,47 @@
 //	    aether.WithVarsSource(&TenantSource{TenantID: "acme", Tier: "enterprise"}),
 //	)
 //
+// ## Dynamic / real-time computation
+//
+// Vars() is called each time the evaluation environment is built, so it can
+// return values computed at call time — not at registration time.
+// This is useful for timestamps, counters, or any data that must reflect the
+// state of the world at the moment a task's inputs are resolved.
+//
+//	// ClockSource exposes the current wall-clock time under the "now" namespace.
+//	// Because Vars() is evaluated lazily, every task that references {{now.*}}
+//	// receives the time at which its inputs are resolved, not when the engine started.
+//	type ClockSource struct{}
+//
+//	func (s *ClockSource) Namespace() string { return "now" }
+//	func (s *ClockSource) Vars() map[string]any {
+//	    t := time.Now().UTC()
+//	    return map[string]any{
+//	        "now.unix":      t.Unix(),                        // e.g. 1711857600
+//	        "now.rfc3339":   t.Format(time.RFC3339),          // e.g. "2026-03-31T04:00:00Z"
+//	        "now.date":      t.Format("2006-01-02"),          // e.g. "2026-03-31"
+//	        "now.year":      t.Year(),                        // e.g. 2026
+//	        "now.month":     int(t.Month()),                  // e.g. 3
+//	        "now.day":       t.Day(),                         // e.g. 31
+//	    }
+//	}
+//
+//	engine, _ := aether.New(
+//	    aether.WithVarsSource(&ClockSource{}),
+//	)
+//
+// With this registered, any workflow template can reference:
+//
+//	{"name": "report-date", "value": "{{now.date}}"}
+//	{"name": "run-at",      "value": "{{now.rfc3339}}"}
+//
 // # Lifecycle
 //
 // Sources have two lifecycle patterns:
 //
-//  1. Global singleton: stateless, stable across runs. Register once with
-//     aether.WithVarsSource. Example: SystemSource.
+//  1. Global singleton: stateless, registered once with aether.WithVarsSource.
+//     Vars() may still compute dynamic values on each call (e.g. ClockSource,
+//     SystemSource). Safe to share across all workflow runs.
 //
 //  2. Per-run value object: carries run-specific data injected at construction.
 //     The engine creates a new instance per execution context. The built-in
