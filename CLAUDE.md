@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Aether is a pluggable, graph-based workflow engine implementing the "Graph Workflow Protocol" (`aether/v1`). It provides composable templates, DAG orchestration, conditional branching, loop primitives, pluggable executors, retry & timeout policies, and suspend/resume (await). Written in Go 1.24 with **zero external dependencies**.
+Aether is a pluggable, graph-based workflow engine implementing the "Graph Workflow Protocol" (`aether/v1`). It provides composable templates, DAG orchestration, conditional branching, loop primitives, pluggable executors, retry & timeout policies, and suspend/resume (await).
 
 ## Design Philosophy
 
@@ -40,13 +40,7 @@ Executors return an integer `ExecCode`. The engine is the **sole writer** of `Ph
 
 This keeps the state machine coherent and prevents executors from expressing engine-level concerns.
 
-### 6. Optimistic Concurrency as the Consistency Model
-
-All mutable state updates use a **Token-based optimistic locking** pattern (`store.WorkflowRun.Token`, `store.TaskRun.Token`). Concurrent writers (multiple engine instances, cancel races, duplicate callbacks) compete via the store's token check — the first writer wins, subsequent ones are silently dropped. No distributed locks, no transactions beyond single-record CAS.
-
-This makes the engine safe to run as multiple replicas and keeps the `store.Store` interface simple to implement.
-
-### 7. Hexagonal Architecture — Dependencies Flow Inward
+### 6. Hexagonal Architecture — Dependencies Flow Inward
 
 The core engine (`package aether`) depends only on **interfaces**. All implementations are injected via functional options (`option.go`). The ports are each in their own package with minimal surface area:
 
@@ -63,11 +57,11 @@ The core engine (`package aether`) depends only on **interfaces**. All implement
 
 Zero external dependencies is a corollary of this: the core engine never imports third-party packages, so every interface implementation is either provided by the caller or included as an optional adapter.
 
-### 8. Declarative Binding — Inputs Flow, Not Side Effects
+### 7. Declarative Binding — Inputs Flow, Not Side Effects
 
 Parameter values flow through the workflow via **declarative binding**: `{{inputs.parameters.name}}` interpolation and expression evaluation. Tasks cannot reach sideways into sibling task state; they can only receive values explicitly wired through `arguments`. This makes data flow visible in the workflow document and testable without running the engine.
 
-### 9. Suspend/Resume as First-Class Primitive
+### 8. Suspend/Resume as First-Class Primitive
 
 Executors can return `ExecCodeSuspended` to pause mid-execution. The task stays in `PhaseRunning`; the engine accumulates partial outputs on each `Resume()` call (last-writer-wins merge). This models human-approval gates, external callback patterns, and long-running interactive tasks without polling.
 
@@ -111,13 +105,21 @@ No Makefile or external build tooling — standard `go` commands only.
 
 ### Key Design Patterns
 
+**Protocol and interfaces as the two load-bearing pillars**: The framework advances through two complementary mechanisms — a declarative protocol (the workflow document) and a set of Go interfaces (the extension points). The protocol is the blueprint: it expresses the intended execution structure without prescribing how it is carried out. The interfaces are the seams: they let every infrastructure concern (state, dispatch, evaluation, secrets, …) be swapped without touching the engine. Neither pillar alone is sufficient — the protocol defines *what*, the interfaces define *how-to-plug-in*.
+
+**Environment-agnostic by design**: The framework makes no assumptions about the deployment topology. A workflow runs identically whether the engine is embedded in a single process, spread across microservices, or deployed as multiple replicas. There is no built-in notion of "local" vs "remote" — that distinction belongs to the `broker.TaskBroker` and `store.Store` implementations provided by the caller.
+
+**Engine is the minimal public API**: `Engine` is the only struct exposed to callers. Its surface area is intentionally small — `Submit`, `Get`, `Resume`, `Cancel`, `Start`, `Stop`, and the two task lifecycle callbacks. Every capability is opt-in via functional options. The guiding rule: *expose less, couple less*. A smaller API means fewer assumptions baked in and lower integration cost for adopters.
+
+**`internal/` is the implementation boundary**: All scheduling algorithms, binding logic, validation, retry/timeout mechanics, and DAG traversal live under `internal/`. Outside of `internal/`, every package (except the top-level `aether` engine package) is a pure interface layer — it defines a contract and nothing else. This boundary is enforced by the Go compiler: no external consumer can import `internal/` directly, keeping implementation details from leaking into the public contract.
+
 **Scope-tree scheduling**: TaskRuns form a tree via `ParentRunID`. Each DAG/Loop container is a "scope". `advanceScope()` processes a scope then walks upward to parent scopes until the workflow finalizes.
 
-**Optimistic concurrency**: All mutable state updates use a `Token`-based optimistic locking pattern. The store decides token semantics (version counter, timestamp, etc.).
-
-**Phase is engine-owned**: Executors return an `ExecCode` (integer). The engine maps codes to `Phase` values, optionally overridden by user-defined `PhaseConditions` expressions.
+**Phase is engine-owned**: Executors return an `ExecCode` (integer). The engine maps codes to `Phase` values, optionally overridden by user-defined `PhaseConditions` expressions. `PhaseSkipped` and `PhaseCancelled` are set exclusively by the engine.
 
 **Fat task assignments**: `broker.TaskAssignment` carries all information needed to execute a task. Workers never query the Store directly.
+
+**Declarative binding**: Parameter values flow via `{{inputs.parameters.name}}` interpolation. Tasks receive values only through explicitly wired `arguments` — no sideways access to sibling state.
 
 **Suspend/resume (await)**: Executors can return `ExecCodeSuspended`. The task stays in `PhaseRunning` with partial outputs. `Engine.Resume()` merges new payload and re-dispatches.
 
