@@ -362,6 +362,7 @@
                 "Created",
                 "Ready",
                 "Running",
+                "Suspended",
                 "Succeeded",
                 "Failed",
                 "Error",
@@ -369,7 +370,7 @@
                 "Timeout",
                 "Cancelled"
             ],
-            "description": "Execution phase: Created (persisted, not yet claimed), Ready (engine committed to execute), Running (worker confirmed start), Succeeded, Failed (business failure), Error (system error), Skipped (when-condition false), Timeout, Cancelled (user/operator terminated via Cancel API)"
+            "description": "Execution phase: Created (persisted, not yet claimed), Ready (engine committed to execute), Running (worker confirmed start), Suspended (executor returned ExecCodeSuspended, awaiting Resume), Succeeded, Failed (business failure), Error (system error), Skipped (when-condition false), Timeout, Cancelled (user/operator terminated via Cancel API)"
         },
         "metrics": {
             "type": "object",

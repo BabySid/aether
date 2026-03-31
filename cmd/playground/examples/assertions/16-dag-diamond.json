@@ -1,0 +1,41 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 5,
+  "expectTasks": [
+    {
+      "taskName": "start",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "seed", "value": 42}
+      ]
+    },
+    {
+      "taskName": "left",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "result", "value": "left-done"}
+      ]
+    },
+    {
+      "taskName": "right",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "result", "value": "right-done"}
+      ]
+    },
+    {
+      "taskName": "join",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "summary", "value": "merged"}
+      ]
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "summary", "value": "merged"}
+      ]
+    }
+  ]
+}

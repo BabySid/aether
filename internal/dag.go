@@ -2,11 +2,11 @@ package internal
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/BabySid/aether/broker"
 	"github.com/BabySid/aether/expr"
+	ivars "github.com/BabySid/aether/internal/vars"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
@@ -258,28 +258,8 @@ func EvalWhenCondition(ctx context.Context, when string, eval expr.Evaluator, ta
 //	tasks.<taskName>.code     → "0"
 //	tasks.<taskName>.msg      → "error message"
 func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
-	env := make(map[string]any)
-	for _, tr := range taskRuns {
-		prefix := "tasks." + tr.TaskName
-		if tr.Status != nil {
-			env[prefix+".phase"] = string(*tr.Status)
-		} else {
-			env[prefix+".phase"] = ""
-		}
-		if tr.Outputs != nil {
-			env[prefix+".code"] = tr.Outputs.Code
-			env[prefix+".msg"] = tr.Outputs.Message
-			for _, p := range tr.Outputs.Parameters {
-				var val any
-				if err := json.Unmarshal(p.Value, &val); err == nil {
-					env[prefix+".outputs.parameters."+p.Name] = val
-				} else {
-					env[prefix+".outputs.parameters."+p.Name] = string(p.Value)
-				}
-			}
-		}
-	}
-	return env
+	src := &ivars.SiblingTaskRunsSource{Runs: taskRuns}
+	return src.Vars()
 }
 
 // BuildTaskAssignment assembles a self-contained TaskAssignment that is passed to broker.Dispatch.

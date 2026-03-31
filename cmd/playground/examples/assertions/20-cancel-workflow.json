@@ -1,0 +1,14 @@
+{
+  "skipIntegration": true,
+  "expectPhase": "Cancelled",
+  "expectTasks": [
+    {
+      "taskName": "prepare",
+      "expectPhase": "Succeeded"
+    },
+    {
+      "taskName": "await",
+      "expectPhase": "Cancelled"
+    }
+  ]
+}

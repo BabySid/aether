@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/BabySid/aether/expr"
+	ivars "github.com/BabySid/aether/internal/vars"
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
 )
@@ -397,26 +398,9 @@ func BuildRepeatEnv(iterIndex int, lastRun *store.TaskRun) map[string]any {
 	env := map[string]any{
 		"loop_iter.index": iterIndex,
 	}
-	if lastRun == nil {
-		return env
-	}
-	prefix := "tasks." + lastRun.TaskName
-	if lastRun.Status != nil {
-		env[prefix+".phase"] = string(*lastRun.Status)
-	} else {
-		env[prefix+".phase"] = ""
-	}
-	if lastRun.Outputs != nil {
-		env[prefix+".code"] = lastRun.Outputs.Code
-		env[prefix+".msg"] = lastRun.Outputs.Message
-		for _, p := range lastRun.Outputs.Parameters {
-			var val any
-			if err := json.Unmarshal(p.Value, &val); err == nil {
-				env[prefix+".outputs.parameters."+p.Name] = val
-			} else {
-				env[prefix+".outputs.parameters."+p.Name] = string(p.Value)
-			}
-		}
+	if lastRun != nil {
+		src := &ivars.SiblingTaskRunsSource{Runs: []*store.TaskRun{lastRun}}
+		maps.Copy(env, src.Vars())
 	}
 	return env
 }

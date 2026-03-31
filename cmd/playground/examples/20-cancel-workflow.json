@@ -1,0 +1,66 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "cancel-workflow",
+        "annotations": {
+            "description": "Cancel test: prepare completes, await suspends, then workflow is cancelled before finalize runs"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "prepare",
+                            "template": "task-ok"
+                        },
+                        {
+                            "name": "await",
+                            "template": "task-suspend",
+                            "dependencies": ["prepare"]
+                        },
+                        {
+                            "name": "finalize",
+                            "template": "task-ok",
+                            "dependencies": ["await"]
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "task-ok",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "ok"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "status", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "task-suspend",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "suspend", "value": true}
+                        ]
+                    },
+                    "executor": {"type": "echo"}
+                }
+            }
+        ]
+    }
+}

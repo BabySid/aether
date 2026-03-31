@@ -1,0 +1,13 @@
+{
+  "expectPhase": "Failed",
+  "expectTasks": [
+    {
+      "taskName": "doomed",
+      "expectPhase": "Failed"
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Failed"
+    }
+  ]
+}

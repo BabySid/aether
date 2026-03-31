@@ -1,0 +1,13 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 4,
+  "expectTasks": [
+    {
+      "taskName": "run-loop",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "result", "value": "alpha"}
+      ]
+    }
+  ]
+}

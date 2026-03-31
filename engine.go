@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/BabySid/aether/artifact"
@@ -33,7 +34,8 @@ type Engine struct {
 	hookNotifier   hook.Notifier
 	idGen          idgen.Generator
 	timeoutWatcher timeout.Watcher
-	stopFn         context.CancelFunc // set by Start; called by Stop
+	stopOnce sync.Once           // ensures Stop logic runs exactly once
+	stopFn   context.CancelFunc // set by Start; called by Stop
 
 	// varsSources holds engine-level Source registrations (global, per-engine).
 	// These are injected into every VarBuilder via newVarBuilder(), giving each
@@ -249,8 +251,8 @@ func (e *Engine) Resume(ctx context.Context, workflowID string, taskID string, p
 	if tr.WorkflowRunID != workflowID {
 		return fmt.Errorf("aether: %w: task %q does not belong to workflow %q", ErrInvalidState, taskID, workflowID)
 	}
-	if tr.Status == nil || *tr.Status != model.PhaseRunning {
-		// Task already completed, timed out, or cancelled — treat as no-op.
+	if tr.Status == nil || *tr.Status != model.PhaseSuspended {
+		// Task not suspended (already completed, still running, timed out, or cancelled) — no-op.
 		return nil
 	}
 
@@ -334,7 +336,7 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 			continue
 		}
 		switch *tr.Status {
-		case model.PhaseRunning:
+		case model.PhaseRunning, model.PhaseSuspended:
 			_ = e.taskBroker.Cancel(ctx, tr.RunID)
 			_, _ = e.store.UpdateTaskRun(ctx, &store.TaskRun{
 				RunID:   tr.RunID,
@@ -412,8 +414,9 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	if err != nil {
 		return
 	}
-	// Guard: only process if currently Running (duplicate callbacks or cancel race).
-	if tr.Status == nil || *tr.Status != model.PhaseRunning {
+	// Guard: only process if currently Running or Suspended (duplicate callbacks or cancel race).
+	// Suspended tasks re-enter OnTaskCompleted after a Resume() re-dispatches them.
+	if tr.Status == nil || (*tr.Status != model.PhaseRunning && *tr.Status != model.PhaseSuspended) {
 		return
 	}
 
@@ -453,14 +456,14 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	}
 	phase := internal.EvalPhaseConditions(ctx, phaseConditions, e.exprEvaluator, result)
 
-	// --- Suspend fast-path (ExecCodeSuspended → PhaseRunning) ---
+	// --- Suspend fast-path (ExecCodeSuspended → PhaseSuspended) ---
 	//
-	// The executor returned ExecCodeSuspended: the task remains in PhaseRunning.
+	// The executor returned ExecCodeSuspended: the task transitions to PhaseSuspended.
 	// Merge the executor's partial outputs into any accumulated outputs from
 	// previous Execute calls (new keys are added; existing keys are overwritten
 	// by the latest executor result). Return early — no hooks, no retry, no
 	// advanceScope; the DAG must not progress until a future Resume finalizes.
-	if phase == model.PhaseRunning {
+	if phase == model.PhaseSuspended {
 		var accumulatedParams []model.Parameter
 		if tr.Outputs != nil {
 			accumulatedParams = tr.Outputs.Parameters
@@ -469,7 +472,7 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 			accumulatedParams = internal.MergeParameters(accumulatedParams, result.ExecOutputs.Parameters)
 		}
 		mergedOutputs := &model.Outputs{
-			Phase:       model.PhaseRunning,
+			Phase:       model.PhaseSuspended,
 			ExecOutputs: model.ExecOutputs{Parameters: accumulatedParams},
 		}
 		var suspendMsg string
@@ -625,9 +628,9 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 func (e *Engine) Start(ctx context.Context) error {
 	innerCtx, cancel := context.WithCancel(ctx)
 	e.stopFn = cancel
+	e.stopOnce = sync.Once{} // reset for a new Start cycle
 	if err := e.timeoutWatcher.Start(innerCtx); err != nil {
 		cancel()
-		e.stopFn = nil
 		return fmt.Errorf("aether: start timeout watcher: %w", err)
 	}
 	go e.watchTimeouts(innerCtx)
@@ -635,12 +638,13 @@ func (e *Engine) Start(ctx context.Context) error {
 }
 
 // Stop shuts down all background services started by Start.
-// It is safe to call Stop multiple times; subsequent calls are no-ops.
+// It is safe to call Stop concurrently or multiple times; only the first call takes effect.
 func (e *Engine) Stop() {
-	if e.stopFn != nil {
-		e.stopFn()
-		e.stopFn = nil
-	}
+	e.stopOnce.Do(func() {
+		if e.stopFn != nil {
+			e.stopFn()
+		}
+	})
 }
 
 // watchTimeouts consumes TimeoutEvents from the Watcher and drives the state machine.

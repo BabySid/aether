@@ -1,0 +1,31 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "setup",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "status", "value": "ok"}
+      ]
+    },
+    {
+      "taskName": "risky",
+      "expectPhase": "Failed"
+    },
+    {
+      "taskName": "cleanup",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "status", "value": "ok"}
+      ]
+    },
+    {
+      "taskName": "strict",
+      "expectPhase": "Failed"
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded"
+    }
+  ]
+}

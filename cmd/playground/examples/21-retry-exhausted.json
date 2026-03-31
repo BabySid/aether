@@ -1,0 +1,41 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "retry-exhausted",
+        "annotations": {
+            "description": "Retry exhausted: task always fails (failCount=5) but retry.limit=2, so retries are exhausted and workflow fails"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "doomed",
+                            "template": "always-fail",
+                            "retry": {
+                                "limit": 2,
+                                "expression": "tasks.doomed.phase != 'Succeeded'"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "always-fail",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "fail-count", "value": 5}
+                        ]
+                    },
+                    "executor": {"type": "echo"}
+                }
+            }
+        ]
+    }
+}

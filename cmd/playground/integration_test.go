@@ -418,8 +418,8 @@ func TestAwaitSuspend(t *testing.T) {
 	}
 	t.Logf("submitted runID=%s", runID)
 
-	// Step 1: wait for "await-approval" to reach PhaseRunning (suspended).
-	suspendedTask := waitTaskPhase(t, b, runID, "await-approval", model.PhaseRunning)
+	// Step 1: wait for "await-approval" to reach PhaseSuspended.
+	suspendedTask := waitTaskPhase(t, b, runID, "await-approval", model.PhaseSuspended)
 	t.Logf("task %q suspended, taskRunID=%s", suspendedTask.TaskName, suspendedTask.RunID)
 
 	// Step 2: resume with approver payload + __resumed marker.
@@ -525,8 +525,8 @@ func TestTaskTimeout(t *testing.T) {
 	}
 	t.Logf("submitted runID=%s", runID)
 
-	// Wait for "wait-external" to enter PhaseRunning (suspended).
-	_ = waitTaskPhase(t, b, runID, "wait-external", model.PhaseRunning)
+	// Wait for "wait-external" to enter PhaseSuspended.
+	_ = waitTaskPhase(t, b, runID, "wait-external", model.PhaseSuspended)
 	t.Logf("task wait-external suspended; waiting for timeout (~1s)...")
 
 	// Do NOT resume — let the task timeout naturally.
@@ -574,6 +574,98 @@ func TestTaskTimeout(t *testing.T) {
 		}
 		t.Logf("  task=%-30s phase=%-12s outputs=[%s]",
 			task.TaskName, phase, strings.Join(outParts, ", "))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestCancelWorkflow — dedicated test for workflow cancellation.
+//
+// Workflow: prepare → await (suspend=true) → finalize
+//
+// Steps:
+//  1. Submit workflow; "prepare" completes.
+//  2. "await" task suspends (PhaseSuspended).
+//  3. Test calls eng.Cancel().
+//  4. "await" transitions to PhaseCancelled, "finalize" never runs.
+//  5. Workflow ends in PhaseCancelled.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCancelWorkflow(t *testing.T) {
+	const wfPath = "examples/20-cancel-workflow.json"
+
+	raw, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", wfPath, err)
+	}
+	var wf model.Workflow
+	if err := json.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", wfPath, err)
+	}
+
+	b := newEngineBundle(t, 30)
+	defer b.cancel()
+
+	if err := b.eng.Start(b.ctx); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer b.eng.Stop()
+
+	runID, err := b.eng.Submit(b.ctx, &wf)
+	if err != nil {
+		t.Fatalf("submit workflow: %v", err)
+	}
+	t.Logf("submitted runID=%s", runID)
+
+	// Wait for "await" to reach PhaseSuspended.
+	_ = waitTaskPhase(t, b, runID, "await", model.PhaseSuspended)
+	t.Logf("task await suspended; cancelling workflow...")
+
+	// Cancel the workflow.
+	if err := b.eng.Cancel(b.ctx, runID); err != nil {
+		t.Fatalf("cancel workflow: %v", err)
+	}
+	t.Logf("cancel sent")
+
+	// Wait for workflow to reach terminal state.
+	finalExec := waitTerminal(t, b, runID)
+	t.Logf("workflow phase=%s tasks=%d", finalExec.Status, len(finalExec.Tasks))
+
+	// Assert: workflow is Cancelled.
+	if finalExec.Status != model.PhaseCancelled {
+		t.Errorf("expected workflow phase %s, got %s", model.PhaseCancelled, finalExec.Status)
+	}
+
+	// Assert: prepare succeeded, await cancelled, finalize should not exist.
+	taskByName := make(map[string]aether.TaskExecution)
+	for _, task := range finalExec.Tasks {
+		taskByName[task.TaskName] = task
+	}
+
+	if prepare, ok := taskByName["prepare"]; ok {
+		if prepare.Status != model.PhaseSucceeded {
+			t.Errorf("task prepare: expected %s, got %s", model.PhaseSucceeded, prepare.Status)
+		}
+	} else {
+		t.Error("task prepare not found")
+	}
+
+	if await, ok := taskByName["await"]; ok {
+		if await.Status != model.PhaseCancelled {
+			t.Errorf("task await: expected %s, got %s", model.PhaseCancelled, await.Status)
+		}
+	} else {
+		t.Error("task await not found")
+	}
+
+	// "finalize" should either not exist or be Cancelled (never started).
+	if finalize, ok := taskByName["finalize"]; ok {
+		if finalize.Status != model.PhaseCancelled {
+			t.Errorf("task finalize: expected %s or absent, got %s", model.PhaseCancelled, finalize.Status)
+		}
+	}
+
+	for _, task := range finalExec.Tasks {
+		t.Logf("  task=%-30s phase=%-12s", task.TaskName, task.Status)
 	}
 }
 

@@ -102,9 +102,10 @@ func ShouldRetry(ctx context.Context, tr *store.TaskRun, phase model.Phase, retr
 
 	// Custom expression: evaluate against the task's own execution result.
 	// Build a synthetic TaskRun with the computed phase for expression evaluation.
-	// If no evaluator is configured, fall back to unconditional retry.
+	// If no evaluator is configured, conservatively skip retry to avoid infinite loops
+	// caused by misconfiguration (expression set but evaluator not injected).
 	if eval == nil {
-		return true, nil
+		return false, nil
 	}
 
 	candidate := *tr

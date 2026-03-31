@@ -1,0 +1,60 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "loop-aggregate-first",
+        "annotations": {
+            "description": "Loop with aggregate strategy=first: loop output uses the first iteration's result"
+        }
+    },
+    "spec": {
+        "entrypoint": "run-loop",
+        "templates": [
+            {
+                "loop": {
+                    "name": "run-loop",
+                    "items": ["alpha", "beta", "gamma"],
+                    "concurrency": 1,
+                    "body": "process",
+                    "arguments": {
+                        "parameters": [
+                            {"name": "result", "value": "{{iterator.item}}"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string"}
+                                ]
+                            }
+                        ]
+                    },
+                    "aggregate": {
+                        "strategy": "first",
+                        "parameters": ["result"]
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "result", "type": "string"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "process",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "result", "type": "string"},
+                            {"name": "outputs", "type": "array"}
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "result", "type": "string"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

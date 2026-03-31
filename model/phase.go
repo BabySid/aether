@@ -6,6 +6,8 @@ package model
 // State machine for all task types (leaf task, DAG container, Loop container):
 //
 //	Created → Ready → Running → (terminal)
+//	                     ↓
+//	                  Suspended → (Resume) → Running → ...
 //
 // Created: task has been persisted to the store but the engine has not yet
 //
@@ -20,6 +22,10 @@ package model
 //
 //	For a leaf task this means OnTaskStarted has been called by the broker.
 //	For a container this means its first child leaf has transitioned to Running.
+//
+// Suspended: the executor returned ExecCodeSuspended. The task is paused,
+//
+//	waiting for an external Resume() call. Only leaf tasks enter this state.
 type Phase string
 
 const (
@@ -30,7 +36,8 @@ const (
 	// For leaf tasks: Broker.Dispatch() has been called.
 	// For containers: the first child leaf task has been dispatched.
 	PhaseReady   Phase = "Ready"
-	PhaseRunning Phase = "Running"
+	PhaseRunning   Phase = "Running"
+	PhaseSuspended Phase = "Suspended"
 
 	PhaseSucceeded Phase = "Succeeded"
 	PhaseFailed    Phase = "Failed"

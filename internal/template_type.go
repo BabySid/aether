@@ -3,7 +3,7 @@ package internal
 import "github.com/BabySid/aether/model"
 
 // ResolveTemplateType determines the template type from its set fields.
-// Exactly one of DAG/Executor/Loop must be set (enforced by Validate).
+// Exactly one of DAG/Task/Loop must be set (enforced by Validate).
 func ResolveTemplateType(tmpl *model.Template) string {
 	switch {
 	case tmpl.DAG != nil:

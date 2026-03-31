@@ -1,0 +1,107 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "loop-items-from",
+        "annotations": {
+            "description": "Loop with itemsFrom: produce task outputs a JSON array, loop iterates over it dynamically"
+        }
+    },
+    "spec": {
+        "entrypoint": "pipeline",
+        "templates": [
+            {
+                "dag": {
+                    "name": "pipeline",
+                    "tasks": [
+                        {
+                            "name": "produce",
+                            "template": "producer"
+                        },
+                        {
+                            "name": "process",
+                            "template": "dynamic-loop",
+                            "dependencies": ["produce"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "items-list",
+                                        "valueFrom": {"parameter": "tasks.produce.outputs.parameters.files"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "producer",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "files", "type": "array", "value": ["data-1.csv", "data-2.csv"]}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "files", "type": "array"}]
+                    }
+                }
+            },
+            {
+                "loop": {
+                    "name": "dynamic-loop",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "items-list", "type": "array"}
+                        ]
+                    },
+                    "itemsFrom": "{{inputs.parameters.items-list}}",
+                    "body": "worker",
+                    "arguments": {
+                        "parameters": [
+                            {"name": "file", "value": "{{iterator.item}}"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "processed", "type": "bool", "value": true}
+                                ]
+                            }
+                        ]
+                    },
+                    "aggregate": {
+                        "strategy": "list",
+                        "parameters": ["processed"]
+                    },
+                    "outputs": {
+                        "parameters": [
+                            {"name": "processed", "type": "array"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "worker",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "file", "type": "string"},
+                            {"name": "outputs", "type": "array"}
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "processed", "type": "bool"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

@@ -1,0 +1,158 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-diamond",
+        "annotations": {
+            "description": "Diamond DAG: start fans out to left and right, then join merges both results"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "summary",
+                                "type": "string",
+                                "valueFrom": {"parameter": "tasks.join.outputs.parameters.summary"}
+                            }
+                        ]
+                    },
+                    "tasks": [
+                        {
+                            "name": "start",
+                            "template": "init-task"
+                        },
+                        {
+                            "name": "left",
+                            "template": "left-branch",
+                            "dependencies": ["start"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "seed",
+                                        "valueFrom": {"parameter": "tasks.start.outputs.parameters.seed"}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "right",
+                            "template": "right-branch",
+                            "dependencies": ["start"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "seed",
+                                        "valueFrom": {"parameter": "tasks.start.outputs.parameters.seed"}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "join",
+                            "template": "merge-task",
+                            "dependencies": ["left", "right"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "left-result",
+                                        "valueFrom": {"parameter": "tasks.left.outputs.parameters.result"}
+                                    },
+                                    {
+                                        "name": "right-result",
+                                        "valueFrom": {"parameter": "tasks.right.outputs.parameters.result"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "init-task",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "seed", "type": "int", "value": 42}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "seed", "type": "int"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "left-branch",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "seed", "type": "int"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string", "value": "left-done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "right-branch",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "seed", "type": "int"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string", "value": "right-done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "merge-task",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "left-result", "type": "string"},
+                            {"name": "right-result", "type": "string"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "summary", "type": "string", "value": "merged"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "summary", "type": "string"}]
+                    }
+                }
+            }
+        ]
+    }
+}

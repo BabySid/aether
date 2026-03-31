@@ -1,0 +1,49 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "loop-repeat-condition",
+        "annotations": {
+            "description": "Loop with repeatCondition: iterates while loop_iter.index != 2, resulting in 3 iterations (0,1,2)"
+        }
+    },
+    "spec": {
+        "entrypoint": "repeat-loop",
+        "templates": [
+            {
+                "loop": {
+                    "name": "repeat-loop",
+                    "repeatCondition": "loop_iter.index != 2",
+                    "maxIterations": 10,
+                    "body": "step",
+                    "outputs": {
+                        "parameters": [
+                            {"name": "done", "type": "bool"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "step",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "done", "type": "bool", "value": true}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "done", "type": "bool"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

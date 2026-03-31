@@ -1,0 +1,78 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-multi-continue-on",
+        "annotations": {
+            "description": "Mixed continueOn: risky-task fails with task-level continueOn so cleanup runs; strict-task fails without continueOn so no downstream. DAG-level continueOn.failed tolerates both."
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "continueOn": {"failed": true},
+                    "tasks": [
+                        {
+                            "name": "setup",
+                            "template": "task-ok"
+                        },
+                        {
+                            "name": "risky",
+                            "template": "task-fail",
+                            "dependencies": ["setup"],
+                            "continueOn": {"failed": true}
+                        },
+                        {
+                            "name": "cleanup",
+                            "template": "task-ok",
+                            "dependencies": ["risky"]
+                        },
+                        {
+                            "name": "strict",
+                            "template": "task-fail",
+                            "dependencies": ["setup"]
+                        },
+                        {
+                            "name": "after-strict",
+                            "template": "task-ok",
+                            "dependencies": ["strict"]
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "task-ok",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "ok"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "status", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "task-fail",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "fail-count", "value": 1}
+                        ]
+                    },
+                    "executor": {"type": "echo"}
+                }
+            }
+        ]
+    }
+}

@@ -1,0 +1,117 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-entrypoints",
+        "annotations": {
+            "description": "DAG with entrypoints: only subgraph reachable from entrypoint A is executed; C and D are excluded"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "entrypoints": ["task-a"],
+                    "tasks": [
+                        {
+                            "name": "task-a",
+                            "template": "node-a"
+                        },
+                        {
+                            "name": "task-b",
+                            "template": "node-b",
+                            "dependencies": ["task-a"]
+                        },
+                        {
+                            "name": "task-c",
+                            "template": "node-c"
+                        },
+                        {
+                            "name": "task-d",
+                            "template": "node-d",
+                            "dependencies": ["task-c"]
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "node-a",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string", "value": "a-done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "node-b",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string", "value": "b-done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "node-c",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string", "value": "c-done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "node-d",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "result", "type": "string", "value": "d-done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "result", "type": "string"}]
+                    }
+                }
+            }
+        ]
+    }
+}

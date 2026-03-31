@@ -251,11 +251,12 @@ func TestShouldRetry_ExpressionNonBool(t *testing.T) {
 }
 
 func TestShouldRetry_ExpressionNilEvaluator(t *testing.T) {
-	// When expression is set but no evaluator is configured, degrade to unconditional retry.
+	// When expression is set but no evaluator is configured, conservatively skip retry
+	// to avoid infinite loops from misconfiguration.
 	tr := makeTaskRun("fetch", model.PhaseFailed, 0)
 	ok, err := ShouldRetry(context.Background(), tr, model.PhaseFailed, &model.Retry{Limit: 3, Expression: "some-expr"}, nil)
-	if err != nil || !ok {
-		t.Errorf("expected (true, nil) when eval=nil (graceful degradation), got (%v, %v)", ok, err)
+	if err != nil || ok {
+		t.Errorf("expected (false, nil) when eval=nil (conservative default), got (%v, %v)", ok, err)
 	}
 }
 

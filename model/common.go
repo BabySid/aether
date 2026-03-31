@@ -7,7 +7,7 @@ package model
 // Code-to-Phase mapping (performed by the engine in OnTaskCompleted):
 //
 //	ExecCodeSucceeded → PhaseSucceeded
-//	ExecCodeSuspended → PhaseRunning   (await pattern)
+//	ExecCodeSuspended → PhaseSuspended (await pattern)
 //	ExecCodeFailed    → PhaseFailed    (business failure)
 //	ExecCodeError     → PhaseError     (system/framework-level error)
 //	ExecCodeTimeout   → PhaseTimeout   (task exceeded its deadline)
@@ -18,7 +18,7 @@ const (
 	// ExecCodeSucceeded indicates the task completed successfully.
 	ExecCodeSucceeded = 0
 	// ExecCodeSuspended indicates the task is suspended, waiting for an external
-	// Resume() call (await pattern). The engine converts this to PhaseRunning.
+	// Resume() call (await pattern). The engine converts this to PhaseSuspended.
 	ExecCodeSuspended = 1
 	// ExecCodeFailed indicates the task completed with a business failure.
 	// The engine converts this to PhaseFailed.

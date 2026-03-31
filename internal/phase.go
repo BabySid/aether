@@ -14,7 +14,7 @@ import (
 // This is the single authoritative Code→Phase mapping in the engine layer.
 //
 //	ExecCodeSucceeded → PhaseSucceeded
-//	ExecCodeSuspended → PhaseRunning   (await pattern)
+//	ExecCodeSuspended → PhaseSuspended (await pattern)
 //	ExecCodeFailed    → PhaseFailed    (business failure)
 //	ExecCodeError     → PhaseError     (system/framework-level error)
 //	ExecCodeTimeout   → PhaseTimeout   (task exceeded its deadline)
@@ -25,7 +25,7 @@ func CodeToPhase(code int) model.Phase {
 	case model.ExecCodeSucceeded:
 		return model.PhaseSucceeded
 	case model.ExecCodeSuspended:
-		return model.PhaseRunning
+		return model.PhaseSuspended
 	case model.ExecCodeFailed:
 		return model.PhaseFailed
 	case model.ExecCodeError:

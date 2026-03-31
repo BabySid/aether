@@ -273,6 +273,23 @@ func TestFindReadyTasks_DepNotTerminal(t *testing.T) {
 	}
 }
 
+func TestFindReadyTasks_DepSuspended(t *testing.T) {
+	dag := &model.DAG{
+		Tasks: []model.Task{
+			{Name: "a"},
+			{Name: "b", Dependencies: []string{"a"}},
+		},
+	}
+	existing := []*store.TaskRun{
+		{TaskName: "a", Status: phasePtr(model.PhaseSuspended)},
+	}
+	// "a" is Suspended (non-terminal) → "b" not ready
+	ready := FindReadyTasks(dag, existing)
+	if len(ready) != 0 {
+		t.Errorf("expected no ready tasks when dep is Suspended, got %v", ready)
+	}
+}
+
 func TestFindReadyTasks_DepFailedNoContinueOn(t *testing.T) {
 	dag := &model.DAG{
 		Tasks: []model.Task{

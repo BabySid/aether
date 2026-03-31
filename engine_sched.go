@@ -55,6 +55,14 @@ func (e *Engine) advanceScope(ctx context.Context, workflowRunID string, wf *mod
 	parentRunID := startParentRunID
 
 	for {
+		// Fast exit: if the context has been cancelled (e.g. engine shutdown),
+		// stop walking the scope tree immediately.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// 1. Load all TaskRuns in this scope (siblings = same parentRunID).
 		siblings, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, parentRunID)
 		if err != nil {

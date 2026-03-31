@@ -1,0 +1,24 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 3,
+  "expectTasks": [
+    {
+      "taskName": "task-a",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "result", "value": "a-done"}
+      ]
+    },
+    {
+      "taskName": "task-b",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "result", "value": "b-done"}
+      ]
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded"
+    }
+  ]
+}

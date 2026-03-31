@@ -1,10 +1,12 @@
 package binding
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/BabySid/aether/model"
 	"github.com/BabySid/aether/store"
+	"github.com/BabySid/aether/vars"
 )
 
 func TestNewVarBuilder_Empty(t *testing.T) {
@@ -169,5 +171,93 @@ func TestVarBuilder_Build_IsSnapshot(t *testing.T) {
 	}
 	if _, exists := env2["workflow.parameters.x"]; !exists {
 		t.Fatal("env2 should contain the new key")
+	}
+}
+
+// ---- WithSource ----
+
+// testSource is a custom vars.Source for testing.
+type testSource struct {
+	ns   string
+	data map[string]any
+}
+
+func (s *testSource) Namespace() string    { return s.ns }
+func (s *testSource) Vars() map[string]any { return s.data }
+
+// verify testSource implements vars.Source
+var _ vars.Source = (*testSource)(nil)
+
+func TestVarBuilder_WithSource(t *testing.T) {
+	src := &testSource{
+		ns:   "custom",
+		data: map[string]any{"custom.region": "us-east-1", "custom.env": "prod"},
+	}
+	env := NewVarBuilder().WithSource(src).Build()
+	if v := env["custom.region"]; v != "us-east-1" {
+		t.Errorf("expected us-east-1, got %v", v)
+	}
+	if v := env["custom.env"]; v != "prod" {
+		t.Errorf("expected prod, got %v", v)
+	}
+}
+
+func TestVarBuilder_WithSource_Nil(t *testing.T) {
+	env := NewVarBuilder().WithSource(nil).Build()
+	if len(env) != 0 {
+		t.Fatalf("expected empty env for nil source, got %d entries", len(env))
+	}
+}
+
+func TestVarBuilder_WithSource_SameNamespaceOverwrites(t *testing.T) {
+	src1 := &testSource{ns: "ns", data: map[string]any{"ns.key": "first"}}
+	src2 := &testSource{ns: "ns", data: map[string]any{"ns.key": "second"}}
+	env := NewVarBuilder().WithSource(src1).WithSource(src2).Build()
+	if v := env["ns.key"]; v != "second" {
+		t.Errorf("expected later source to overwrite, got %v", v)
+	}
+}
+
+// ---- Build(namespaces...) ----
+
+func TestVarBuilder_Build_SelectiveNamespaces(t *testing.T) {
+	srcA := &testSource{ns: "alpha", data: map[string]any{"alpha.x": 1}}
+	srcB := &testSource{ns: "beta", data: map[string]any{"beta.y": 2}}
+	srcC := &testSource{ns: "gamma", data: map[string]any{"gamma.z": 3}}
+
+	b := NewVarBuilder().WithSource(srcA).WithSource(srcB).WithSource(srcC)
+
+	// Only request alpha and gamma
+	env := b.Build("alpha", "gamma")
+	if v := env["alpha.x"]; v != 1 {
+		t.Errorf("expected alpha.x=1, got %v", v)
+	}
+	if v := env["gamma.z"]; v != 3 {
+		t.Errorf("expected gamma.z=3, got %v", v)
+	}
+	if _, exists := env["beta.y"]; exists {
+		t.Error("beta namespace should not be included")
+	}
+}
+
+func TestVarBuilder_Build_UnknownNamespace(t *testing.T) {
+	src := &testSource{ns: "alpha", data: map[string]any{"alpha.x": 1}}
+	env := NewVarBuilder().WithSource(src).Build("nonexistent")
+	if len(env) != 0 {
+		t.Fatalf("expected empty env for unknown namespace, got %d entries", len(env))
+	}
+}
+
+func TestVarBuilder_Build_MixedBuiltinAndCustomSource(t *testing.T) {
+	custom := &testSource{ns: "tenant", data: map[string]any{"tenant.id": "t-123"}}
+	args := &model.Arguments{
+		Parameters: []model.Parameter{{Name: "env", Value: json.RawMessage(`"staging"`)}},
+	}
+	env := NewVarBuilder().WithWorkflowArgs(args).WithSource(custom).Build()
+	if v := env["workflow.parameters.env"]; v != "staging" {
+		t.Errorf("expected staging, got %v", v)
+	}
+	if v := env["tenant.id"]; v != "t-123" {
+		t.Errorf("expected t-123, got %v", v)
 	}
 }

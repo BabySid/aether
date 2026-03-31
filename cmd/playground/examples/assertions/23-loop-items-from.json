@@ -1,0 +1,23 @@
+{
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "produce",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "files", "value": ["data-1.csv", "data-2.csv"]}
+      ]
+    },
+    {
+      "taskName": "process",
+      "expectPhase": "Succeeded",
+      "expectOutputs": [
+        {"name": "processed", "value": [true, true]}
+      ]
+    },
+    {
+      "taskName": "pipeline",
+      "expectPhase": "Succeeded"
+    }
+  ]
+}

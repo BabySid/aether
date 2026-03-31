@@ -63,7 +63,7 @@ Parameter values flow through the workflow via **declarative binding**: `{{input
 
 ### 8. Suspend/Resume as First-Class Primitive
 
-Executors can return `ExecCodeSuspended` to pause mid-execution. The task stays in `PhaseRunning`; the engine accumulates partial outputs on each `Resume()` call (last-writer-wins merge). This models human-approval gates, external callback patterns, and long-running interactive tasks without polling.
+Executors can return `ExecCodeSuspended` to pause mid-execution. The task transitions to `PhaseSuspended`; the engine accumulates partial outputs on each `Resume()` call (last-writer-wins merge). This models human-approval gates, external callback patterns, and long-running interactive tasks without polling.
 
 ---
 
@@ -121,7 +121,7 @@ No Makefile or external build tooling — standard `go` commands only.
 
 **Declarative binding**: Parameter values flow via `{{inputs.parameters.name}}` interpolation. Tasks receive values only through explicitly wired `arguments` — no sideways access to sibling state.
 
-**Suspend/resume (await)**: Executors can return `ExecCodeSuspended`. The task stays in `PhaseRunning` with partial outputs. `Engine.Resume()` merges new payload and re-dispatches.
+**Suspend/resume (await)**: Executors can return `ExecCodeSuspended`. The task transitions to `PhaseSuspended` with partial outputs. `Engine.Resume()` merges new payload and re-dispatches.
 
 ### Model Layer (`model/`)
 
