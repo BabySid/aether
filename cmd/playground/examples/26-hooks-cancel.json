@@ -1,0 +1,76 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "hooks-cancel",
+        "annotations": {
+            "description": "Tests OnCancel and OnExit hooks when workflow is cancelled"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "hooks": {
+            "onStart":  { "template": "hook-task" },
+            "onCancel": { "template": "hook-task" },
+            "onExit":   { "template": "hook-task" }
+        },
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "prepare",
+                            "template": "task-ok"
+                        },
+                        {
+                            "name": "wait",
+                            "template": "task-suspend",
+                            "dependencies": ["prepare"],
+                            "hooks": {
+                                "onCancel": { "template": "hook-task" },
+                                "onExit":   { "template": "hook-task" }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "task-ok",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "ok"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "status", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "task-suspend",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "suspend", "value": true}
+                        ]
+                    },
+                    "executor": {"type": "echo"}
+                }
+            },
+            {
+                "task": {
+                    "name": "hook-task",
+                    "executor": {"type": "echo"}
+                }
+            }
+        ]
+    }
+}

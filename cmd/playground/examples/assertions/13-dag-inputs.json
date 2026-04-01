@@ -1,0 +1,52 @@
+{
+    "expectPhase": "Succeeded",
+    "expectTaskCount": 5,
+    "expectTasks": [
+        {
+            "taskName": "fetch",
+            "expectPhase": "Succeeded",
+            "expectOutputs": [
+                {
+                    "name": "raw",
+                    "value": 10
+                }
+            ]
+        },
+        {
+            "taskName": "compute",
+            "expectPhase": "Succeeded",
+            "expectOutputs": [
+                {
+                    "name": "report",
+                    "value": {
+                        "user": "u123",
+                        "value": 30
+                    }
+                }
+            ]
+        },
+        {
+            "taskName": "call-process",
+            "expectPhase": "Succeeded",
+            "expectOutputs": [
+                {
+                    "name": "report",
+                    "value": {
+                        "user": "u123",
+                        "value": 30
+                    }
+                }
+            ]
+        },
+        {
+            "taskName": "summarize",
+            "expectPhase": "Succeeded",
+            "expectOutputs": [
+                {
+                    "name": "done",
+                    "value": true
+                }
+            ]
+        }
+    ]
+}

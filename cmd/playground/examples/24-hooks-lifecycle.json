@@ -1,0 +1,71 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "hooks-lifecycle",
+        "annotations": {
+            "description": "Tests workflow-level and task-level hooks firing during normal lifecycle"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "hooks": {
+            "onStart":   { "template": "hook-task" },
+            "onSuccess": { "template": "hook-task" },
+            "onExit":    { "template": "hook-task" }
+        },
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "step-a",
+                            "template": "work-task",
+                            "hooks": {
+                                "onStart":   { "template": "hook-task" },
+                                "onSuccess": { "template": "hook-task" },
+                                "onExit":    { "template": "hook-task" }
+                            }
+                        },
+                        {
+                            "name": "step-b",
+                            "template": "work-task",
+                            "dependencies": ["step-a"],
+                            "hooks": {
+                                "onStart":   { "template": "hook-task" },
+                                "onSuccess": { "template": "hook-task" },
+                                "onExit":    { "template": "hook-task" }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "work-task",
+                    "inputs": {
+                        "parameters": [
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "status", "type": "string", "value": "done"}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "status", "type": "string"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "hook-task",
+                    "executor": {"type": "echo"}
+                }
+            }
+        ]
+    }
+}

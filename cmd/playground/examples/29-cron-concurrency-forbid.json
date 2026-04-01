@@ -1,0 +1,30 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "CronWorkflow",
+    "metadata": {
+        "name": "cron-concurrency-forbid",
+        "annotations": {
+            "description": "CronWorkflow with Forbid policy: second trigger is skipped while first run is active"
+        }
+    },
+    "spec": {
+        "schedule": "0 * * * *",
+        "concurrencyPolicy": "Forbid",
+        "workflowSpec": {
+            "entrypoint": "main",
+            "templates": [
+                {
+                    "task": {
+                        "name": "main",
+                        "executor": {"type": "echo"},
+                        "inputs": {
+                            "parameters": [
+                                {"name": "suspend", "value": true}
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}

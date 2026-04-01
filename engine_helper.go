@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/BabySid/aether/errsink"
+	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
@@ -112,6 +114,92 @@ func (e *Engine) tryMarkTaskError(ctx context.Context, workflowRunID, taskRunID 
 			Operation: "tryMarkTaskError", Severity: errsink.SeverityCritical,
 		})
 	}
+}
+
+// submitInternal is the shared submission path. cronWorkflowID is non-empty
+// when the workflow is triggered by a CronWorkflow.
+func (e *Engine) submitInternal(ctx context.Context, wf *model.Workflow, cronWorkflowID string) (string, error) {
+	// 1. Nil check
+	if wf == nil {
+		return "", fmt.Errorf("aether: %w: workflow must not be nil", ErrValidation)
+	}
+
+	// 2. Marshal raw workflow JSON (immutable snapshot)
+	rawJSON, err := json.Marshal(wf)
+	if err != nil {
+		return "", fmt.Errorf("aether: marshal workflow: %w", err)
+	}
+
+	// 3. Fill defaults
+	internal.FillDefaults(wf)
+
+	// 4. Validate (structural + semantic)
+	if err := internal.Validate(wf); err != nil {
+		return "", fmt.Errorf("aether: %w: %v", ErrValidation, err)
+	}
+
+	// 5. Resolve entrypoint template
+	entry := internal.FindTemplate(wf, wf.Spec.Entrypoint)
+	if entry == nil {
+		return "", fmt.Errorf("aether: %w: entrypoint template %q not found", ErrValidation, wf.Spec.Entrypoint)
+	}
+
+	// 6. Determine entrypoint template type
+	templateType := internal.ResolveTemplateType(entry)
+	if templateType == "" {
+		return "", fmt.Errorf("aether: %w: entrypoint template %q has no dag/executor/loop", ErrValidation, wf.Spec.Entrypoint)
+	}
+
+	// --- All checks passed. Now persist and dispatch. ---
+
+	// 7. Generate workflow run ID and persist WorkflowRun
+	workflowRunID := e.idGen.Generate(idgen.Context{WorkflowKind: wf.Kind})
+	pendingPhase := model.PhaseCreated
+	run := &store.WorkflowRun{
+		RunID:          workflowRunID,
+		Workflow:       rawJSON,
+		Status:         &pendingPhase,
+		CronWorkflowID: cronWorkflowID,
+	}
+	// Set workflow-level deadline if a timeout is configured.
+	if wf.Spec.Timeout != "" {
+		if d, parseErr := internal.ParseDuration(wf.Spec.Timeout); parseErr == nil && d > 0 {
+			dl := time.Now().Add(d)
+			run.Deadline = &dl
+		}
+	}
+	if err := e.store.CreateWorkflowRun(ctx, run); err != nil {
+		return "", fmt.Errorf("aether: create workflow run: %w", err)
+	}
+
+	// 8. Create entry TaskRun (Created, ParentRunID="" for top-level scope)
+	entryPending := model.PhaseCreated
+	entryTaskRun := &store.TaskRun{
+		RunID: e.idGen.Generate(idgen.Context{
+			WorkflowRunID: workflowRunID,
+			WorkflowKind:  wf.Kind,
+			TaskName:      wf.Spec.Entrypoint,
+			TemplateName:  wf.Spec.Entrypoint,
+		}),
+		WorkflowRunID: workflowRunID,
+		ParentRunID:   "",
+		Depth:         0,
+		Scope:         "",
+		TaskName:      wf.Spec.Entrypoint,
+		TemplateName:  wf.Spec.Entrypoint,
+		TemplateType:  templateType,
+		Status:        &entryPending,
+	}
+	if err := e.store.CreateTaskRun(ctx, entryTaskRun); err != nil {
+		return "", fmt.Errorf("aether: create entry task run: %w", err)
+	}
+
+	// 9. Start scheduling via advanceScope
+	if err := e.advanceScope(ctx, workflowRunID, wf, ""); err != nil {
+		return "", fmt.Errorf("aether: %w", err)
+	}
+
+	return workflowRunID, nil
 }
 
 // loadWorkflow loads and deserializes the workflow from a WorkflowRun.

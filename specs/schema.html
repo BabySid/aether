@@ -183,12 +183,13 @@ h1 small { font-size: 0.85rem; color: var(--dim); font-weight: 400; }
       <span class="line"><span class="f">schedule</span>: <span class="kw">string</span> <span class="c"># cron expr, e.g. "0 * * * *"</span></span>
       <span class="line"><span class="f">workflowSpec</span>: <a class="tr" href="#WorkflowSpec">WorkflowSpec</a></span>
       <span class="line"><span class="f">timezone?</span> <span class="dv">= "UTC"</span>: <span class="kw">string</span> <span class="c"># e.g. "Asia/Shanghai"</span></span>
+      <span class="line"><span class="f">startAt?</span>: <span class="kw">string(date-time)</span> <span class="c"># RFC3339; scheduling begins at this time</span></span>
+      <span class="line"><span class="f">endAt?</span>: <span class="kw">string(date-time)</span> <span class="c"># RFC3339; scheduling stops after this time</span></span>
       <span class="line"><span class="f">concurrencyPolicy?</span> <span class="dv">= "Allow"</span>: <span class="v">"Allow" | "Forbid" | "Replace"</span></span>
-      <span class="line"><span class="f">startingDeadlineSeconds?</span>: <span class="kw">int[0..]</span></span>
+      <span class="line"><span class="f">startingDeadlineSeconds?</span>: <span class="kw">int[1..]</span> <span class="c"># nil = no deadline</span></span>
       <span class="line"><span class="f">successfulJobsHistoryLimit?</span> <span class="dv">= 3</span>: <span class="kw">int[0..]</span></span>
       <span class="line"><span class="f">failedJobsHistoryLimit?</span> <span class="dv">= 1</span>: <span class="kw">int[0..]</span></span>
       <span class="line"><span class="f">suspend?</span> <span class="dv">= false</span>: <span class="kw">bool</span> <span class="c"># pause triggering</span></span>
-      <span class="line"><span class="f">workflowMetadata?</span>: <a class="tr" href="#Metadata">Metadata</a></span>
     </div>
 
     <div class="type-card wide" id="Template">

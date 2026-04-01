@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/BabySid/aether/errsink"
+	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
@@ -173,7 +174,7 @@ func (e *Engine) startLoopController(ctx context.Context, workflowRunID string, 
 		numToCreate = loop.Concurrency
 	}
 	for i := 0; i < numToCreate; i++ {
-		if err := e.createIterationRun(ctx, workflowRunID, loopTR, loop, loop.Body, bodyTemplateType, i, iterations[i]); err != nil {
+		if err := e.createIterationRun(ctx, workflowRunID, wf, loopTR, loop, loop.Body, bodyTemplateType, i, iterations[i]); err != nil {
 			return err
 		}
 	}
@@ -221,7 +222,12 @@ func (e *Engine) spawnRepeatIteration(ctx context.Context, workflowRunID string,
 	iterScope := fmt.Sprintf("%s.loop[%d]/", loopTR.TaskName, iterIndex)
 	pendingPhase := model.PhaseCreated
 	iterRun := &store.TaskRun{
-		RunID:         e.idGen.Generate(),
+		RunID: e.idGen.Generate(idgen.Context{
+			WorkflowRunID: workflowRunID,
+			WorkflowKind:  wf.Kind,
+			TaskName:      loop.Body,
+			TemplateName:  loop.Body,
+		}),
 		WorkflowRunID: workflowRunID,
 		ParentRunID:   loopTR.RunID,
 		Depth:         loopTR.Depth + 1,
@@ -325,7 +331,7 @@ func (e *Engine) tryAdvanceRepeatLoop(ctx context.Context, workflowRunID string,
 //   - Pass static values (e.g. outputs declarations) through to body tasks.
 //
 // The Scope field is set to "<loopTaskName>.loop[<iterIndex>]/" for traceability.
-func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, loopTR *store.TaskRun, loop *model.Loop, bodyName, bodyTemplateType string, iterIndex int, iterParams map[string]any) error {
+func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, wf *model.Workflow, loopTR *store.TaskRun, loop *model.Loop, bodyName, bodyTemplateType string, iterIndex int, iterParams map[string]any) error {
 	iterScope := fmt.Sprintf("%s.loop[%d]/", loopTR.TaskName, iterIndex)
 
 	// Build the iteration env: loop_iter.* keys + iterator.* aliases.
@@ -369,7 +375,12 @@ func (e *Engine) createIterationRun(ctx context.Context, workflowRunID string, l
 
 	iterPending := model.PhaseCreated
 	iterRun := &store.TaskRun{
-		RunID:         e.idGen.Generate(),
+		RunID: e.idGen.Generate(idgen.Context{
+			WorkflowRunID: workflowRunID,
+			WorkflowKind:  wf.Kind,
+			TaskName:      bodyName,
+			TemplateName:  bodyName,
+		}),
 		WorkflowRunID: workflowRunID,
 		ParentRunID:   loopTR.RunID,
 		Depth:         loopTR.Depth + 1,
@@ -517,7 +528,7 @@ func (e *Engine) trySpawnNextIterations(ctx context.Context, workflowRunID strin
 
 	spawned := false
 	for slot := 0; slot < availableSlots && createdCount < totalIter; slot++ {
-		if err := e.createIterationRun(ctx, workflowRunID, parentTR, loop, loop.Body, bodyTemplateType, createdCount, iterations[createdCount]); err != nil {
+		if err := e.createIterationRun(ctx, workflowRunID, wf, parentTR, loop, loop.Body, bodyTemplateType, createdCount, iterations[createdCount]); err != nil {
 			return false, err
 		}
 		createdCount++

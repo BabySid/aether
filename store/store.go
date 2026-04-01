@@ -26,8 +26,8 @@ var ErrTokenMismatch = errors.New("token mismatch")
 type Store interface {
 	WorkflowRunStore
 	TaskRunStore
-	WorkflowTemplateStore
 	SchemaStore
+	CronWorkflowStore
 	Close() error
 }
 
@@ -46,9 +46,17 @@ type WorkflowRunStore interface {
 	// On success the returned WorkflowRun reflects the post-update state.
 	UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) (*WorkflowRun, error)
 
-	// ListActiveWorkflowRuns returns all non-terminal workflow runs.
-	// Intended for crash recovery on engine restart; not yet wired into the engine.
+	// ListActiveWorkflowRuns returns all non-terminal workflow runs that have a Deadline set.
+	// Used by the timeout watchdog to detect workflows that have exceeded their Deadline.
 	ListActiveWorkflowRuns(ctx context.Context) ([]*WorkflowRun, error)
+
+	// DeleteWorkflowRun removes a workflow run and all its associated TaskRuns by ID.
+	// Returns ErrNotFound if the workflow run does not exist.
+	DeleteWorkflowRun(ctx context.Context, runID string) error
+
+	// ListWorkflowRunsByCronID returns all WorkflowRuns created by the given CronWorkflow.
+	// Used by CronController for concurrency policy checks and history cleanup.
+	ListWorkflowRunsByCronID(ctx context.Context, cronWorkflowID string) ([]*WorkflowRun, error)
 }
 
 // TaskRunStore manages task run persistence.
@@ -93,12 +101,6 @@ type TaskRunStore interface {
 	ListActiveTaskRuns(ctx context.Context) ([]*TaskRun, error)
 }
 
-// WorkflowTemplateStore manages external workflow template loading.
-type WorkflowTemplateStore interface {
-	// GetWorkflowTemplate loads a WorkflowTemplate by namespace and name.
-	GetWorkflowTemplate(ctx context.Context, namespace, name string) (*model.WorkflowTemplate, error)
-}
-
 // SchemaStore handles persistence of executor schemas.
 // Business logic (version compatibility checks, active worker tracking) is handled
 // in-memory by VersionedSchemaRegistry; this interface only provides raw schema CRUD,
@@ -137,9 +139,10 @@ type SchemaRecord struct {
 // Mutable fields use pointer types: nil means "do not modify this field" in UpdateWorkflowRun.
 type WorkflowRun struct {
 	// Immutable
-	RunID     string
-	Workflow  json.RawMessage // immutable raw workflow JSON
-	CreatedAt time.Time
+	RunID          string
+	Workflow       json.RawMessage // immutable raw workflow JSON
+	CreatedAt      time.Time
+	CronWorkflowID string // non-empty when created by a CronWorkflow trigger
 
 	// Mutable (nil = do not modify in UpdateWorkflowRun)
 	Status  *model.Phase
@@ -203,4 +206,53 @@ type TaskRun struct {
 	// timestamp, or ignored entirely for single-threaded stores).
 	Token     uint64
 	UpdatedAt time.Time
+}
+
+// --- CronWorkflow storage ---
+
+// CronWorkflowStore manages CronWorkflow persistence.
+type CronWorkflowStore interface {
+	// CreateCronWorkflow persists a new CronWorkflow record.
+	// The CronID must be unique; duplicates return an error.
+	CreateCronWorkflow(ctx context.Context, record *CronWorkflowRecord) error
+
+	// GetCronWorkflow retrieves a CronWorkflow record by its system-generated ID.
+	// Returns ErrNotFound if the record does not exist.
+	GetCronWorkflow(ctx context.Context, cronID string) (*CronWorkflowRecord, error)
+
+	// UpdateCronWorkflow persists mutable fields of a CronWorkflow record.
+	// record.Token is passed to the implementation for optimistic concurrency control.
+	// On success the stored Token and UpdatedAt are advanced.
+	UpdateCronWorkflow(ctx context.Context, record *CronWorkflowRecord) error
+
+	// DeleteCronWorkflow removes a CronWorkflow record by ID.
+	// Returns ErrNotFound if the record does not exist.
+	// Already-created WorkflowRuns are NOT cascade-deleted.
+	DeleteCronWorkflow(ctx context.Context, cronID string) error
+
+	// ListCronWorkflows returns all persisted CronWorkflow records.
+	// Used during engine Start() to re-register schedules after a crash/restart.
+	ListCronWorkflows(ctx context.Context) ([]*CronWorkflowRecord, error)
+}
+
+// CronWorkflowRecord is the store-level representation of a CronWorkflow.
+type CronWorkflowRecord struct {
+	// Immutable
+	CronID       string          // system-generated ID (returned by SubmitCronWorkflow)
+	CronWorkflow json.RawMessage // original CronWorkflow JSON (immutable spec snapshot)
+	CreatedAt    time.Time
+
+	// Mutable
+	Status    *CronWorkflowStatus
+	Token     uint64
+	UpdatedAt time.Time
+}
+
+// CronWorkflowStatus holds the mutable runtime state of a CronWorkflow.
+// Only fields that cannot be derived from WorkflowRun records are kept here.
+type CronWorkflowStatus struct {
+	// LastScheduleTime is the cron-matched time of the most recent trigger.
+	LastScheduleTime *time.Time `json:"lastScheduleTime,omitempty"`
+	// LastSubmittedRunID is the WorkflowRun ID of the most recent successful submit.
+	LastSubmittedRunID string `json:"lastSubmittedRunID,omitempty"`
 }

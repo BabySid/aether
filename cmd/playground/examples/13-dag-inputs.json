@@ -1,0 +1,159 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "dag-inputs",
+        "annotations": {
+            "description": "DAG inputs: outer DAG passes arguments to inner DAG template; inner DAG declares inputs and propagates outputs back to outer downstream task",
+            "test:expect-phase": "Succeeded",
+            "test:expect-task-count": "5"
+        }
+    },
+    "spec": {
+        "entrypoint": "outer",
+        "templates": [
+            {
+                "dag": {
+                    "name": "outer",
+                    "tasks": [
+                        {
+                            "name": "call-process",
+                            "template": "process-data",
+                            "arguments": {
+                                "parameters": [
+                                    {"name": "userid",     "value": "u123"},
+                                    {"name": "multiplier", "value": 3}
+                                ]
+                            }
+                        },
+                        {
+                            "name": "summarize",
+                            "template": "summarize-task",
+                            "dependencies": ["call-process"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "report",
+                                        "valueFrom": {"parameter": "tasks.call-process.outputs.parameters.report"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "dag": {
+                    "name": "process-data",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "userid",     "type": "string"},
+                            {"name": "multiplier", "type": "int"}
+                        ]
+                    },
+                    "tasks": [
+                        {
+                            "name": "fetch",
+                            "template": "fetch-task",
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "uid",
+                                        "valueFrom": {"parameter": "inputs.parameters.userid"}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "compute",
+                            "template": "compute-task",
+                            "dependencies": ["fetch"],
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "raw",
+                                        "valueFrom": {"parameter": "tasks.fetch.outputs.parameters.raw"}
+                                    },
+                                    {
+                                        "name": "factor",
+                                        "valueFrom": {"parameter": "inputs.parameters.multiplier"}
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                    "outputs": {
+                        "parameters": [
+                            {
+                                "name": "report",
+                                "type": "object",
+                                "valueFrom": {"parameter": "tasks.compute.outputs.parameters.report"}
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "fetch-task",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "uid", "type": "string"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "raw", "type": "int", "value": 10}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "raw", "type": "int"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "compute-task",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "raw",    "type": "int"},
+                            {"name": "factor", "type": "int"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "report", "type": "object", "value": {"user": "u123", "value": 30}}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "report", "type": "object"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "summarize-task",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "report", "type": "object"},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "done", "type": "bool", "value": true}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "done", "type": "bool"}]
+                    }
+                }
+            }
+        ]
+    }
+}

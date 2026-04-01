@@ -1,0 +1,30 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "CronWorkflow",
+    "metadata": {
+        "name": "cron-concurrency-replace",
+        "annotations": {
+            "description": "CronWorkflow with Replace policy: second trigger cancels the first active run"
+        }
+    },
+    "spec": {
+        "schedule": "0 * * * *",
+        "concurrencyPolicy": "Replace",
+        "workflowSpec": {
+            "entrypoint": "main",
+            "templates": [
+                {
+                    "task": {
+                        "name": "main",
+                        "executor": {"type": "echo"},
+                        "inputs": {
+                            "parameters": [
+                                {"name": "suspend", "value": true}
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}

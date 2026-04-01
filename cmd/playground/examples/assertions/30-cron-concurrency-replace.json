@@ -1,0 +1,6 @@
+{
+    "skipIntegration": true,
+    "cronTriggerCount": 2,
+    "expectRunCount": 2,
+    "expectCancelledCount": 1
+}

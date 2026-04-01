@@ -72,6 +72,16 @@ type WorkflowAssertion struct {
 	ExpectPhase     string          `json:"expectPhase"`
 	ExpectTaskCount *int            `json:"expectTaskCount,omitempty"`
 	ExpectTasks     []TaskAssertion `json:"expectTasks,omitempty"`
+
+	// CronWorkflow-specific fields (used by TestCronIntegration).
+	// CronTriggerCount is the number of times to fire the cron trigger.
+	CronTriggerCount int `json:"cronTriggerCount,omitempty"`
+	// ExpectRunCount is the expected number of WorkflowRuns after all triggers.
+	ExpectRunCount *int `json:"expectRunCount,omitempty"`
+	// ExpectRunPhase, if set, asserts the phase of the last created WorkflowRun.
+	ExpectRunPhase string `json:"expectRunPhase,omitempty"`
+	// ExpectCancelledCount is the expected number of Cancelled runs.
+	ExpectCancelledCount *int `json:"expectCancelledCount,omitempty"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

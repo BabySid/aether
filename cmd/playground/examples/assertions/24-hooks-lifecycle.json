@@ -1,0 +1,8 @@
+{
+    "skipIntegration": true,
+    "expectPhase": "Succeeded",
+    "expectTasks": [
+        {"taskName": "step-a", "expectPhase": "Succeeded"},
+        {"taskName": "step-b", "expectPhase": "Succeeded"}
+    ]
+}

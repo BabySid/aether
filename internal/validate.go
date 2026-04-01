@@ -3,6 +3,8 @@ package internal
 import (
 	"fmt"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/BabySid/aether/model"
 )
@@ -39,7 +41,7 @@ func Validate(wf *model.Workflow) error {
 	if wf.APIVersion != "aether/v1" {
 		return fmt.Errorf("unsupported apiVersion: %s", wf.APIVersion)
 	}
-	if wf.Kind != "Workflow" && wf.Kind != "CronWorkflow" && wf.Kind != "WorkflowTemplate" {
+	if wf.Kind != "Workflow" && wf.Kind != "CronWorkflow" {
 		return fmt.Errorf("unsupported kind: %s", wf.Kind)
 	}
 	if wf.Metadata.Name == "" {
@@ -337,6 +339,103 @@ func validateHooks(wf *model.Workflow, location string, hooks *model.Hooks) erro
 				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+// cronMacros are predefined cron schedule macros (e.g. @hourly).
+var cronMacros = map[string]bool{
+	"@yearly": true, "@annually": true, "@monthly": true,
+	"@weekly": true, "@daily": true, "@midnight": true, "@hourly": true,
+}
+
+// ValidateCronWorkflow performs structural and semantic validation on a CronWorkflow.
+func ValidateCronWorkflow(cw *model.CronWorkflow) error {
+	if cw.APIVersion != "aether/v1" {
+		return fmt.Errorf("unsupported apiVersion: %s", cw.APIVersion)
+	}
+	if cw.Kind != "CronWorkflow" {
+		return fmt.Errorf("unsupported kind: %s (expected CronWorkflow)", cw.Kind)
+	}
+	if cw.Metadata.Name == "" {
+		return fmt.Errorf("metadata.name is required")
+	}
+	if err := validateName("metadata.name", cw.Metadata.Name); err != nil {
+		return err
+	}
+
+	// Schedule: required, 5-field cron or macro
+	if cw.Spec.Schedule == "" {
+		return fmt.Errorf("spec.schedule is required")
+	}
+	if !cronMacros[cw.Spec.Schedule] {
+		fields := strings.Fields(cw.Spec.Schedule)
+		if len(fields) != 5 {
+			return fmt.Errorf("spec.schedule %q must be a 5-field cron expression or a macro (@hourly, @daily, etc.)", cw.Spec.Schedule)
+		}
+	}
+
+	// Timezone: valid IANA timezone
+	if cw.Spec.Timezone != "" {
+		if _, err := time.LoadLocation(cw.Spec.Timezone); err != nil {
+			return fmt.Errorf("spec.timezone %q: %w", cw.Spec.Timezone, err)
+		}
+	}
+
+	// StartAt/EndAt: valid RFC3339
+	var startAt, endAt time.Time
+	if cw.Spec.StartAt != "" {
+		var err error
+		startAt, err = time.Parse(time.RFC3339, cw.Spec.StartAt)
+		if err != nil {
+			return fmt.Errorf("spec.startAt %q: must be valid RFC3339: %w", cw.Spec.StartAt, err)
+		}
+	}
+	if cw.Spec.EndAt != "" {
+		var err error
+		endAt, err = time.Parse(time.RFC3339, cw.Spec.EndAt)
+		if err != nil {
+			return fmt.Errorf("spec.endAt %q: must be valid RFC3339: %w", cw.Spec.EndAt, err)
+		}
+	}
+	if !startAt.IsZero() && !endAt.IsZero() && !endAt.After(startAt) {
+		return fmt.Errorf("spec.endAt must be after spec.startAt")
+	}
+
+	// ConcurrencyPolicy
+	if cw.Spec.ConcurrencyPolicy != "" {
+		switch cw.Spec.ConcurrencyPolicy {
+		case model.ConcurrencyAllow, model.ConcurrencyForbid, model.ConcurrencyReplace:
+			// valid
+		default:
+			return fmt.Errorf("spec.concurrencyPolicy %q: must be Allow, Forbid, or Replace", cw.Spec.ConcurrencyPolicy)
+		}
+	}
+
+	// StartingDeadlineSeconds: > 0 when non-nil
+	if cw.Spec.StartingDeadlineSeconds != nil && *cw.Spec.StartingDeadlineSeconds <= 0 {
+		return fmt.Errorf("spec.startingDeadlineSeconds must be > 0")
+	}
+
+	// History limits: >= 0
+	if cw.Spec.SuccessfulJobsHistoryLimit < 0 {
+		return fmt.Errorf("spec.successfulJobsHistoryLimit must be >= 0")
+	}
+	if cw.Spec.FailedJobsHistoryLimit < 0 {
+		return fmt.Errorf("spec.failedJobsHistoryLimit must be >= 0")
+	}
+
+	// WorkflowSpec: required, validate via existing Validate()
+	tmpWf := &model.Workflow{
+		APIVersion: cw.APIVersion,
+		Kind:       "Workflow",
+		Metadata:   cw.Metadata,
+		Spec:       cw.Spec.WorkflowSpec,
+	}
+	FillDefaults(tmpWf)
+	if err := Validate(tmpWf); err != nil {
+		return fmt.Errorf("spec.workflowSpec: %w", err)
 	}
 
 	return nil

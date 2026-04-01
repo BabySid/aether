@@ -3,7 +3,7 @@ package model
 // Workflow is the top-level resource for a graph workflow.
 type Workflow struct {
 	APIVersion string       `json:"apiVersion"` // aether/v1
-	Kind       string       `json:"kind"`       // Workflow | CronWorkflow | WorkflowTemplate
+	Kind       string       `json:"kind"`       // Workflow | CronWorkflow
 	Metadata   Metadata     `json:"metadata"`
 	Spec       WorkflowSpec `json:"spec,omitempty"`
 }
@@ -27,23 +27,24 @@ type CronWorkflow struct {
 	Spec       CronWorkflowSpec `json:"spec"`
 }
 
+// Concurrency policy constants for CronWorkflow.
+const (
+	ConcurrencyAllow   = "Allow"
+	ConcurrencyForbid  = "Forbid"
+	ConcurrencyReplace = "Replace"
+)
+
 // CronWorkflowSpec defines the specification for a CronWorkflow.
 type CronWorkflowSpec struct {
 	Schedule                   string       `json:"schedule"`
 	Timezone                   string       `json:"timezone,omitempty"`
-	ConcurrencyPolicy          string       `json:"concurrencyPolicy,omitempty"` // Allow, Forbid, Replace
-	StartingDeadlineSeconds    int          `json:"startingDeadlineSeconds,omitempty"`
+	StartAt                    string       `json:"startAt,omitempty"`                    // optional RFC3339
+	EndAt                      string       `json:"endAt,omitempty"`                      // optional RFC3339
+	ConcurrencyPolicy          string       `json:"concurrencyPolicy,omitempty"`          // Allow, Forbid, Replace
+	StartingDeadlineSeconds    *int         `json:"startingDeadlineSeconds,omitempty"`    // nil = no deadline
 	SuccessfulJobsHistoryLimit int          `json:"successfulJobsHistoryLimit,omitempty"`
 	FailedJobsHistoryLimit     int          `json:"failedJobsHistoryLimit,omitempty"`
 	Suspend                    bool         `json:"suspend,omitempty"`
 	WorkflowSpec               WorkflowSpec `json:"workflowSpec"`
-	WorkflowMetadata           *Metadata    `json:"workflowMetadata,omitempty"`
 }
 
-// WorkflowTemplate is the top-level resource for a reusable workflow template.
-type WorkflowTemplate struct {
-	APIVersion string       `json:"apiVersion"`
-	Kind       string       `json:"kind"` // WorkflowTemplate
-	Metadata   Metadata     `json:"metadata"`
-	Spec       WorkflowSpec `json:"spec"`
-}

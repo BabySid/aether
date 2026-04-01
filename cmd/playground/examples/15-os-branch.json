@@ -1,0 +1,84 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "os-branch",
+        "annotations": {
+            "description": "Branch on runtime OS: detect-os reads system.os via VarsSource, then run-on-mac or run-on-linux executes based on the when condition."
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "detect-os",
+                            "template": "os-detector",
+                            "arguments": {
+                                "parameters": [
+                                    {"name": "os",      "valueFrom": {"parameter": "system.os"}},
+                                    {"name": "outputs", "value": [
+                                        {"name": "os", "type": "string"}
+                                    ]}
+                                ]
+                            }
+                        },
+                        {
+                            "name": "run-on-mac",
+                            "template": "mac-task",
+                            "dependencies": ["detect-os"],
+                            "when": "tasks.detect-os.outputs.parameters.os == \"darwin\""
+                        },
+                        {
+                            "name": "run-on-linux",
+                            "template": "linux-task",
+                            "dependencies": ["detect-os"],
+                            "when": "tasks.detect-os.outputs.parameters.os == \"linux\""
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "os-detector",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "os", "type": "string"}
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "os", "type": "string"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "mac-task",
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "platform", "type": "string"}
+                        ]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "linux-task",
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "platform", "type": "string"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/BabySid/aether/errsink"
+	"github.com/BabySid/aether/idgen"
 	"github.com/BabySid/aether/internal"
 	"github.com/BabySid/aether/internal/binding"
 	"github.com/BabySid/aether/model"
@@ -100,7 +101,12 @@ func (e *Engine) createEligibleTasks(ctx context.Context, workflowRunID string, 
 			skippedPhase := model.PhaseSkipped
 			skipMsg := fmt.Sprintf("when condition %q evaluated to false", task.When)
 			skippedRun := &store.TaskRun{
-				RunID:         e.idGen.Generate(),
+				RunID: e.idGen.Generate(idgen.Context{
+					WorkflowRunID: workflowRunID,
+					WorkflowKind:  wf.Kind,
+					TaskName:      task.Name,
+					TemplateName:  task.Template,
+				}),
 				WorkflowRunID: workflowRunID,
 				ParentRunID:   parentRunID,
 				Depth:         parentTR.Depth + 1,
@@ -128,7 +134,12 @@ func (e *Engine) createEligibleTasks(ctx context.Context, workflowRunID string, 
 			}
 			pendingPhase := model.PhaseCreated
 			newRun := &store.TaskRun{
-				RunID:         e.idGen.Generate(),
+				RunID: e.idGen.Generate(idgen.Context{
+					WorkflowRunID: workflowRunID,
+					WorkflowKind:  wf.Kind,
+					TaskName:      task.Name,
+					TemplateName:  task.Template,
+				}),
 				WorkflowRunID: workflowRunID,
 				ParentRunID:   parentRunID,
 				Depth:         parentTR.Depth + 1,

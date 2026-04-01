@@ -1102,6 +1102,16 @@
                     "default": "UTC",
                     "description": "Timezone, e.g. Asia/Shanghai"
                 },
+                "startAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Optional start time in RFC3339 format; scheduling begins at this time"
+                },
+                "endAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Optional end time in RFC3339 format; scheduling stops after this time"
+                },
                 "concurrencyPolicy": {
                     "type": "string",
                     "enum": [
@@ -1114,8 +1124,8 @@
                 },
                 "startingDeadlineSeconds": {
                     "type": "integer",
-                    "minimum": 0,
-                    "description": "Starting deadline in seconds; skip this run if not started within this time"
+                    "minimum": 1,
+                    "description": "Starting deadline in seconds; if a scheduled run is not started within this window, it is skipped. Must be > 0 when set"
                 },
                 "successfulJobsHistoryLimit": {
                     "type": "integer",
@@ -1137,10 +1147,6 @@
                 "workflowSpec": {
                     "$ref": "#/definitions/workflowSpec",
                     "description": "Workflow spec created on each scheduled trigger"
-                },
-                "workflowMetadata": {
-                    "$ref": "#/definitions/metadata",
-                    "description": "Metadata template for generated Workflow instances"
                 }
             },
             "required": [

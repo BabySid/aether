@@ -1,0 +1,37 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "CronWorkflow",
+    "metadata": {
+        "name": "cron-basic",
+        "annotations": {
+            "description": "Basic CronWorkflow: fires once, inner workflow completes successfully"
+        }
+    },
+    "spec": {
+        "schedule": "0 * * * *",
+        "workflowSpec": {
+            "entrypoint": "main",
+            "templates": [
+                {
+                    "task": {
+                        "name": "main",
+                        "inputs": {
+                            "parameters": [
+                                {
+                                    "name": "outputs",
+                                    "value": [
+                                        {"name": "result", "type": "string", "value": "cron-ok"}
+                                    ]
+                                }
+                            ]
+                        },
+                        "executor": {"type": "echo"},
+                        "outputs": {
+                            "parameters": [{"name": "result", "type": "string"}]
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}

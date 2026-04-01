@@ -69,7 +69,7 @@ func TestValidate_UnsupportedKind(t *testing.T) {
 }
 
 func TestValidate_AllSupportedKinds(t *testing.T) {
-	for _, kind := range []string{"Workflow", "CronWorkflow", "WorkflowTemplate"} {
+	for _, kind := range []string{"Workflow", "CronWorkflow"} {
 		wf := validWorkflow()
 		wf.Kind = kind
 		if err := Validate(wf); err != nil {
@@ -996,6 +996,286 @@ func TestValidate_AllHookTypes(t *testing.T) {
 	}
 	if err := Validate(wf); err != nil {
 		t.Fatalf("expected all hook types to pass validation, got: %v", err)
+	}
+}
+
+// --- CronWorkflow validation tests ---
+
+func validCronWorkflow() *model.CronWorkflow {
+	return &model.CronWorkflow{
+		APIVersion: "aether/v1",
+		Kind:       "CronWorkflow",
+		Metadata:   model.Metadata{Name: "test-cron"},
+		Spec: model.CronWorkflowSpec{
+			Schedule: "0 * * * *",
+			Timezone: "UTC",
+			WorkflowSpec: model.WorkflowSpec{
+				Entrypoint: "main",
+				Templates: []model.Template{
+					{
+						DAG: &model.DAG{
+							Name: "main",
+							Tasks: []model.Task{
+								{Name: "step1", Template: "exec-a"},
+							},
+						},
+					},
+					{
+						Task: &model.Task{
+							Name:     "exec-a",
+							Executor: &model.Executor{Type: "script"},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestValidateCronWorkflow_Valid(t *testing.T) {
+	cw := validCronWorkflow()
+	FillCronDefaults(cw)
+	if err := ValidateCronWorkflow(cw); err != nil {
+		t.Fatalf("expected valid CronWorkflow, got: %v", err)
+	}
+}
+
+func TestValidateCronWorkflow_ScheduleMacros(t *testing.T) {
+	for _, macro := range []string{"@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"} {
+		cw := validCronWorkflow()
+		cw.Spec.Schedule = macro
+		FillCronDefaults(cw)
+		if err := ValidateCronWorkflow(cw); err != nil {
+			t.Errorf("macro %q should be valid, got: %v", macro, err)
+		}
+	}
+}
+
+func TestValidateCronWorkflow_UnsupportedAPIVersion(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.APIVersion = "v2"
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "unsupported apiVersion")
+}
+
+func TestValidateCronWorkflow_WrongKind(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Kind = "Workflow"
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "expected CronWorkflow")
+}
+
+func TestValidateCronWorkflow_EmptyName(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Metadata.Name = ""
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "metadata.name is required")
+}
+
+func TestValidateCronWorkflow_InvalidName(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Metadata.Name = "My Cron"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "DNS-1123")
+}
+
+func TestValidateCronWorkflow_EmptySchedule(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.Schedule = ""
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "schedule is required")
+}
+
+func TestValidateCronWorkflow_InvalidSchedule(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.Schedule = "not a cron"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "5-field cron")
+}
+
+func TestValidateCronWorkflow_InvalidTimezone(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.Timezone = "Invalid/Zone"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "timezone")
+}
+
+func TestValidateCronWorkflow_ValidTimezone(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.Timezone = "Asia/Shanghai"
+	FillCronDefaults(cw)
+	if err := ValidateCronWorkflow(cw); err != nil {
+		t.Fatalf("Asia/Shanghai should be valid, got: %v", err)
+	}
+}
+
+func TestValidateCronWorkflow_InvalidStartAt(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.StartAt = "not-a-date"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "startAt")
+}
+
+func TestValidateCronWorkflow_InvalidEndAt(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.EndAt = "not-a-date"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "endAt")
+}
+
+func TestValidateCronWorkflow_EndAtBeforeStartAt(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.StartAt = "2030-01-02T00:00:00Z"
+	cw.Spec.EndAt = "2030-01-01T00:00:00Z"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "endAt must be after")
+}
+
+func TestValidateCronWorkflow_ValidStartAtEndAt(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.StartAt = "2030-01-01T00:00:00Z"
+	cw.Spec.EndAt = "2030-12-31T23:59:59Z"
+	FillCronDefaults(cw)
+	if err := ValidateCronWorkflow(cw); err != nil {
+		t.Fatalf("expected valid, got: %v", err)
+	}
+}
+
+func TestValidateCronWorkflow_InvalidConcurrencyPolicy(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.ConcurrencyPolicy = "Invalid"
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "concurrencyPolicy")
+}
+
+func TestValidateCronWorkflow_ValidConcurrencyPolicies(t *testing.T) {
+	for _, policy := range []string{model.ConcurrencyAllow, model.ConcurrencyForbid, model.ConcurrencyReplace} {
+		cw := validCronWorkflow()
+		cw.Spec.ConcurrencyPolicy = policy
+		FillCronDefaults(cw)
+		if err := ValidateCronWorkflow(cw); err != nil {
+			t.Errorf("policy %q should be valid, got: %v", policy, err)
+		}
+	}
+}
+
+func TestValidateCronWorkflow_StartingDeadlineSecondsZero(t *testing.T) {
+	cw := validCronWorkflow()
+	zero := 0
+	cw.Spec.StartingDeadlineSeconds = &zero
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error for StartingDeadlineSeconds=0")
+	}
+	assertContains(t, err.Error(), "startingDeadlineSeconds")
+}
+
+func TestValidateCronWorkflow_StartingDeadlineSecondsNegative(t *testing.T) {
+	cw := validCronWorkflow()
+	neg := -1
+	cw.Spec.StartingDeadlineSeconds = &neg
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err.Error(), "startingDeadlineSeconds")
+}
+
+func TestValidateCronWorkflow_StartingDeadlineSecondsValid(t *testing.T) {
+	cw := validCronWorkflow()
+	val := 60
+	cw.Spec.StartingDeadlineSeconds = &val
+	FillCronDefaults(cw)
+	if err := ValidateCronWorkflow(cw); err != nil {
+		t.Fatalf("expected valid, got: %v", err)
+	}
+}
+
+func TestValidateCronWorkflow_StartingDeadlineSecondsNil(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.StartingDeadlineSeconds = nil
+	FillCronDefaults(cw)
+	if err := ValidateCronWorkflow(cw); err != nil {
+		t.Fatalf("nil StartingDeadlineSeconds should be valid, got: %v", err)
+	}
+}
+
+func TestValidateCronWorkflow_InvalidWorkflowSpec(t *testing.T) {
+	cw := validCronWorkflow()
+	cw.Spec.WorkflowSpec = model.WorkflowSpec{} // empty, missing entrypoint
+	FillCronDefaults(cw)
+	err := ValidateCronWorkflow(cw)
+	if err == nil {
+		t.Fatal("expected error for empty WorkflowSpec")
+	}
+	assertContains(t, err.Error(), "workflowSpec")
+}
+
+func TestValidateCronWorkflow_FiveFieldSchedule(t *testing.T) {
+	tests := []struct {
+		schedule string
+		valid    bool
+	}{
+		{"*/5 * * * *", true},
+		{"0 0 1 1 *", true},
+		{"0 9 * * 1-5", true},
+		{"0 * * *", false},       // 4 fields
+		{"0 * * * * *", false},   // 6 fields
+	}
+	for _, tt := range tests {
+		cw := validCronWorkflow()
+		cw.Spec.Schedule = tt.schedule
+		FillCronDefaults(cw)
+		err := ValidateCronWorkflow(cw)
+		if tt.valid && err != nil {
+			t.Errorf("schedule %q should be valid, got: %v", tt.schedule, err)
+		}
+		if !tt.valid && err == nil {
+			t.Errorf("schedule %q should be invalid", tt.schedule)
+		}
 	}
 }
 

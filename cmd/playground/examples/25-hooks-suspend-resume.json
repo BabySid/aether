@@ -1,0 +1,59 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "hooks-suspend-resume",
+        "annotations": {
+            "description": "Tests OnSuspend and OnResume hooks during suspend/resume lifecycle"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "approval",
+                            "template": "suspend-task",
+                            "hooks": {
+                                "onStart":   { "template": "hook-task" },
+                                "onSuspend": { "template": "hook-task" },
+                                "onResume":  { "template": "hook-task" },
+                                "onSuccess": { "template": "hook-task" },
+                                "onExit":    { "template": "hook-task" }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "suspend-task",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "suspend", "value": true},
+                            {
+                                "name": "outputs",
+                                "value": [
+                                    {"name": "approved", "type": "bool", "value": true}
+                                ]
+                            }
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [{"name": "approved", "type": "bool"}]
+                    }
+                }
+            },
+            {
+                "task": {
+                    "name": "hook-task",
+                    "executor": {"type": "echo"}
+                }
+            }
+        ]
+    }
+}

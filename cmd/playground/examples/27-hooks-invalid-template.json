@@ -1,0 +1,39 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "hooks-invalid-template",
+        "annotations": {
+            "description": "Hook references a DAG template, should fail validation"
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "hooks": {
+            "onSuccess": { "template": "main" }
+        },
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "step",
+                            "inputs": {
+                                "parameters": [
+                                    {
+                                        "name": "outputs",
+                                        "value": [
+                                            {"name": "status", "type": "string", "value": "ok"}
+                                        ]
+                                    }
+                                ]
+                            },
+                            "executor": {"type": "echo"}
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

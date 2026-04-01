@@ -1,0 +1,10 @@
+{
+    "skipIntegration": true,
+    "expectPhase": "Succeeded",
+    "expectTasks": [
+        {
+            "taskName": "report-env",
+            "expectPhase": "Succeeded"
+        }
+    ]
+}

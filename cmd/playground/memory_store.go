@@ -68,10 +68,11 @@ type MemoryStore struct {
 	taskRuns     map[string]*store.TaskRun
 	taskIndex    map[string][]*store.TaskRun
 	parentIndex  map[string][]*store.TaskRun
-	templates    map[string]*model.WorkflowTemplate
-
 	// schema store: key = execType+"::"+workerID
 	schemas map[string]store.SchemaRecord
+
+	// cron workflow store
+	cronWorkflows map[string]*store.CronWorkflowRecord
 
 	// snapshot history
 	snapMu    sync.Mutex
@@ -81,12 +82,12 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		workflowRuns: make(map[string]*store.WorkflowRun),
-		taskRuns:     make(map[string]*store.TaskRun),
-		taskIndex:    make(map[string][]*store.TaskRun),
-		parentIndex:  make(map[string][]*store.TaskRun),
-		templates:    make(map[string]*model.WorkflowTemplate),
-		schemas:      make(map[string]store.SchemaRecord),
+		workflowRuns:  make(map[string]*store.WorkflowRun),
+		taskRuns:      make(map[string]*store.TaskRun),
+		taskIndex:     make(map[string][]*store.TaskRun),
+		parentIndex:   make(map[string][]*store.TaskRun),
+		schemas:       make(map[string]store.SchemaRecord),
+		cronWorkflows: make(map[string]*store.CronWorkflowRecord),
 	}
 }
 
@@ -262,6 +263,38 @@ func (m *MemoryStore) UpdateWorkflowRun(_ context.Context, run *store.WorkflowRu
 	return &cp, nil
 }
 
+func (m *MemoryStore) DeleteWorkflowRun(_ context.Context, runID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.workflowRuns[runID]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.workflowRuns, runID)
+
+	// Cascade-delete all associated TaskRuns.
+	for id, tr := range m.taskRuns {
+		if tr.WorkflowRunID == runID {
+			delete(m.taskRuns, id)
+		}
+	}
+	delete(m.taskIndex, runID)
+	// Clean up parentIndex entries belonging to this workflow run.
+	for key, trs := range m.parentIndex {
+		var kept []*store.TaskRun
+		for _, tr := range trs {
+			if tr.WorkflowRunID != runID {
+				kept = append(kept, tr)
+			}
+		}
+		if len(kept) == 0 {
+			delete(m.parentIndex, key)
+		} else {
+			m.parentIndex[key] = kept
+		}
+	}
+	return nil
+}
+
 func (m *MemoryStore) ListActiveWorkflowRuns(_ context.Context) ([]*store.WorkflowRun, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -423,16 +456,6 @@ func (m *MemoryStore) ListTaskRunsByParent(_ context.Context, workflowRunID stri
 	return result, nil
 }
 
-func (m *MemoryStore) GetWorkflowTemplate(_ context.Context, namespace, name string) (*model.WorkflowTemplate, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	key := namespace + "/" + name
-	tmpl, ok := m.templates[key]
-	if !ok {
-		return nil, fmt.Errorf("workflow template %s: %w", key, store.ErrNotFound)
-	}
-	return tmpl, nil
-}
 
 // --- SchemaStore ---
 
@@ -466,6 +489,100 @@ func (m *MemoryStore) DeleteSchema(_ context.Context, execType, workerID string)
 	}
 	return nil
 }
+
+// --- WorkflowRunStore: ListWorkflowRunsByCronID ---
+
+func (m *MemoryStore) ListWorkflowRunsByCronID(_ context.Context, cronWorkflowID string) ([]*store.WorkflowRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*store.WorkflowRun
+	for _, run := range m.workflowRuns {
+		if run.CronWorkflowID == cronWorkflowID {
+			cp := *run
+			if run.Status != nil {
+				s := *run.Status
+				cp.Status = &s
+			}
+			if run.Message != nil {
+				s := *run.Message
+				cp.Message = &s
+			}
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
+// --- CronWorkflowStore ---
+
+func (m *MemoryStore) CreateCronWorkflow(_ context.Context, record *store.CronWorkflowRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.cronWorkflows[record.CronID]; exists {
+		return fmt.Errorf("cron workflow %s already exists", record.CronID)
+	}
+	now := time.Now()
+	cp := *record
+	cp.CreatedAt = now
+	cp.UpdatedAt = now
+	m.cronWorkflows[record.CronID] = &cp
+	return nil
+}
+
+func (m *MemoryStore) GetCronWorkflow(_ context.Context, cronID string) (*store.CronWorkflowRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	record, ok := m.cronWorkflows[cronID]
+	if !ok {
+		return nil, fmt.Errorf("cron workflow %s: %w", cronID, store.ErrNotFound)
+	}
+	cp := *record
+	return &cp, nil
+}
+
+func (m *MemoryStore) UpdateCronWorkflow(_ context.Context, record *store.CronWorkflowRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.cronWorkflows[record.CronID]
+	if !ok {
+		return fmt.Errorf("cron workflow %s: %w", record.CronID, store.ErrNotFound)
+	}
+	if existing.Token != record.Token {
+		return fmt.Errorf("cron workflow %s: %w", record.CronID, store.ErrTokenMismatch)
+	}
+	if record.Status != nil {
+		existing.Status = record.Status
+	}
+	if record.CronWorkflow != nil {
+		existing.CronWorkflow = record.CronWorkflow
+	}
+	existing.Token++
+	existing.UpdatedAt = time.Now()
+	return nil
+}
+
+func (m *MemoryStore) DeleteCronWorkflow(_ context.Context, cronID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.cronWorkflows[cronID]; !ok {
+		return fmt.Errorf("cron workflow %s: %w", cronID, store.ErrNotFound)
+	}
+	delete(m.cronWorkflows, cronID)
+	return nil
+}
+
+func (m *MemoryStore) ListCronWorkflows(_ context.Context) ([]*store.CronWorkflowRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]*store.CronWorkflowRecord, 0, len(m.cronWorkflows))
+	for _, record := range m.cronWorkflows {
+		cp := *record
+		result = append(result, &cp)
+	}
+	return result, nil
+}
+
+// --- Internal helpers ---
 
 func (m *MemoryStore) taskExistsLocked(workflowRunID, parentRunID string, scope, taskName string) bool {
 	pk := parentKey(workflowRunID, parentRunID)

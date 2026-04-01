@@ -1,3 +1,5 @@
+// engine.go contains only the public API of the Engine (exported methods).
+// All unexported helper methods belong in engine_helper.go or other engine_*.go files.
 package aether
 
 import (
@@ -10,6 +12,7 @@ import (
 
 	"github.com/BabySid/aether/artifact"
 	"github.com/BabySid/aether/broker"
+	"github.com/BabySid/aether/cron"
 	"github.com/BabySid/aether/errsink"
 	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/expr"
@@ -43,6 +46,10 @@ type Engine struct {
 	// These are injected into every VarBuilder via newVarBuilder(), giving each
 	// workflow run access to the variables they provide (e.g. system.os, system.arch).
 	varsSources []vars.Source
+
+	// cronScheduler is the optional cron scheduling backend.
+	// Nil when CronWorkflow support is not configured.
+	cronScheduler cron.Scheduler
 }
 
 // New creates an Engine with the given options.
@@ -72,88 +79,62 @@ func New(opts ...Option) (*Engine, error) {
 	return e, nil
 }
 
+// --- Submit ---
+
 // Submit parses, validates, and dispatches a workflow for execution.
 // Returns the workflow run ID. Non-blocking.
 //
 // All checks (marshal, fill defaults, validate, resolve entrypoint) are
 // performed before any state is persisted to Store.
 func (e *Engine) Submit(ctx context.Context, wf *model.Workflow) (string, error) {
-	// 1. Nil check
-	if wf == nil {
-		return "", fmt.Errorf("aether: %w: workflow must not be nil", ErrValidation)
+	return e.submitInternal(ctx, wf, "")
+}
+
+// SubmitCronWorkflow validates and registers a CronWorkflow for periodic execution.
+// Returns the system-generated cronID.
+func (e *Engine) SubmitCronWorkflow(ctx context.Context, cw *model.CronWorkflow) (string, error) {
+	if e.cronScheduler == nil {
+		return "", fmt.Errorf("aether: %w: CronScheduler not configured, use WithCronScheduler()", ErrNotSupported)
+	}
+	if cw == nil {
+		return "", fmt.Errorf("aether: %w: CronWorkflow must not be nil", ErrValidation)
 	}
 
-	// 2. Marshal raw workflow JSON (immutable snapshot)
-	rawJSON, err := json.Marshal(wf)
+	// Marshal immutable snapshot.
+	rawJSON, err := json.Marshal(cw)
 	if err != nil {
-		return "", fmt.Errorf("aether: marshal workflow: %w", err)
+		return "", fmt.Errorf("aether: marshal CronWorkflow: %w", err)
 	}
 
-	// 3. Fill defaults
-	internal.FillDefaults(wf)
-
-	// 4. Validate (structural + semantic)
-	if err := internal.Validate(wf); err != nil {
+	// Fill defaults and validate.
+	internal.FillCronDefaults(cw)
+	if err := internal.ValidateCronWorkflow(cw); err != nil {
 		return "", fmt.Errorf("aether: %w: %v", ErrValidation, err)
 	}
 
-	// 5. Resolve entrypoint template
-	entry := internal.FindTemplate(wf, wf.Spec.Entrypoint)
-	if entry == nil {
-		return "", fmt.Errorf("aether: %w: entrypoint template %q not found", ErrValidation, wf.Spec.Entrypoint)
+	// Generate cronID and persist.
+	cronID := e.idGen.Generate(idgen.Context{WorkflowKind: "CronWorkflow"})
+	record := &store.CronWorkflowRecord{
+		CronID:       cronID,
+		CronWorkflow: rawJSON,
+	}
+	if err := e.store.CreateCronWorkflow(ctx, record); err != nil {
+		return "", fmt.Errorf("aether: create CronWorkflow: %w", err)
 	}
 
-	// 6. Determine entrypoint template type
-	templateType := internal.ResolveTemplateType(entry)
-	if templateType == "" {
-		return "", fmt.Errorf("aether: %w: entrypoint template %q has no dag/executor/loop", ErrValidation, wf.Spec.Entrypoint)
-	}
-
-	// --- All checks passed. Now persist and dispatch. ---
-
-	// 7. Generate workflow run ID and persist WorkflowRun
-	workflowRunID := e.idGen.Generate()
-	pendingPhase := model.PhaseCreated
-	run := &store.WorkflowRun{
-		RunID:    workflowRunID,
-		Workflow: rawJSON,
-		Status:   &pendingPhase,
-	}
-	// Set workflow-level deadline if a timeout is configured.
-	if wf.Spec.Timeout != "" {
-		if d, parseErr := internal.ParseDuration(wf.Spec.Timeout); parseErr == nil && d > 0 {
-			dl := time.Now().Add(d)
-			run.Deadline = &dl
+	// Register with scheduler (unless suspended).
+	if !cw.Spec.Suspend {
+		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func() {
+			e.triggerCronRun(cronID)
+		}); err != nil {
+			return "", fmt.Errorf("aether: register cron schedule: %w", err)
 		}
 	}
-	if err := e.store.CreateWorkflowRun(ctx, run); err != nil {
-		return "", fmt.Errorf("aether: create workflow run: %w", err)
-	}
 
-	// 8. Create entry TaskRun (Created, ParentRunID="" for top-level scope)
-	entryPending := model.PhaseCreated
-	entryTaskRun := &store.TaskRun{
-		RunID:         e.idGen.Generate(),
-		WorkflowRunID: workflowRunID,
-		ParentRunID:   "",
-		Depth:         0,
-		Scope:         "",
-		TaskName:      wf.Spec.Entrypoint,
-		TemplateName:  wf.Spec.Entrypoint,
-		TemplateType:  templateType,
-		Status:        &entryPending,
-	}
-	if err := e.store.CreateTaskRun(ctx, entryTaskRun); err != nil {
-		return "", fmt.Errorf("aether: create entry task run: %w", err)
-	}
-
-	// 9. Start scheduling via advanceScope
-	if err := e.advanceScope(ctx, workflowRunID, wf, ""); err != nil {
-		return "", fmt.Errorf("aether: %w", err)
-	}
-
-	return workflowRunID, nil
+	return cronID, nil
 }
+
+// --- Get ---
 
 // Get retrieves the current execution state of a workflow. Non-blocking.
 func (e *Engine) Get(ctx context.Context, workflowID string) (*WorkflowExecution, error) {
@@ -220,6 +201,110 @@ func (e *Engine) Get(ctx context.Context, workflowID string) (*WorkflowExecution
 
 	return exec, nil
 }
+
+// GetCronWorkflow returns the execution state of a CronWorkflow and its triggered runs.
+func (e *Engine) GetCronWorkflow(ctx context.Context, cronID string) (*CronWorkflowExecution, error) {
+	if e.cronScheduler == nil {
+		return nil, fmt.Errorf("aether: %w: CronScheduler not configured, use WithCronScheduler()", ErrNotSupported)
+	}
+
+	if _, err := e.store.GetCronWorkflow(ctx, cronID); err != nil {
+		return nil, fmt.Errorf("aether: %w", err)
+	}
+
+	runs, err := e.store.ListWorkflowRunsByCronID(ctx, cronID)
+	if err != nil {
+		return nil, fmt.Errorf("aether: list workflow runs: %w", err)
+	}
+
+	exec := &CronWorkflowExecution{ID: cronID}
+	for _, run := range runs {
+		wfExec, err := e.Get(ctx, run.RunID)
+		if err != nil {
+			continue
+		}
+		exec.Runs = append(exec.Runs, *wfExec)
+	}
+	return exec, nil
+}
+
+// --- CronWorkflow management ---
+
+// UpdateCronWorkflow updates the mutable fields of a CronWorkflow.
+// WorkflowSpec is immutable; changes to it return ErrValidation.
+func (e *Engine) UpdateCronWorkflow(ctx context.Context, cronID string, cw *model.CronWorkflow) error {
+	if e.cronScheduler == nil {
+		return fmt.Errorf("aether: %w: CronScheduler not configured, use WithCronScheduler()", ErrNotSupported)
+	}
+	if cw == nil {
+		return fmt.Errorf("aether: %w: CronWorkflow must not be nil", ErrValidation)
+	}
+
+	// Load existing record.
+	record, err := e.store.GetCronWorkflow(ctx, cronID)
+	if err != nil {
+		return fmt.Errorf("aether: %w", err)
+	}
+
+	// Unmarshal existing CronWorkflow to check WorkflowSpec immutability.
+	var existing model.CronWorkflow
+	if err := json.Unmarshal(record.CronWorkflow, &existing); err != nil {
+		return fmt.Errorf("aether: unmarshal existing CronWorkflow: %w", err)
+	}
+
+	// Check WorkflowSpec immutability by comparing serialized JSON.
+	oldSpec, _ := json.Marshal(existing.Spec.WorkflowSpec)
+	newSpec, _ := json.Marshal(cw.Spec.WorkflowSpec)
+	if string(oldSpec) != string(newSpec) {
+		return fmt.Errorf("aether: %w: WorkflowSpec is immutable; delete and re-submit to change it", ErrValidation)
+	}
+
+	// Fill defaults and validate.
+	internal.FillCronDefaults(cw)
+	if err := internal.ValidateCronWorkflow(cw); err != nil {
+		return fmt.Errorf("aether: %w: %v", ErrValidation, err)
+	}
+
+	// Marshal updated CronWorkflow.
+	rawJSON, err := json.Marshal(cw)
+	if err != nil {
+		return fmt.Errorf("aether: marshal CronWorkflow: %w", err)
+	}
+
+	// Update store.
+	record.CronWorkflow = rawJSON
+	if err := e.store.UpdateCronWorkflow(ctx, record); err != nil {
+		return fmt.Errorf("aether: update CronWorkflow: %w", err)
+	}
+
+	// Re-register with scheduler.
+	e.cronScheduler.Remove(cronID)
+	if !cw.Spec.Suspend {
+		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func() {
+			e.triggerCronRun(cronID)
+		}); err != nil {
+			return fmt.Errorf("aether: register cron schedule: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// DeleteCronWorkflow stops scheduling and removes a CronWorkflow.
+// Already-created WorkflowRuns are NOT cascade-deleted.
+func (e *Engine) DeleteCronWorkflow(ctx context.Context, cronID string) error {
+	if e.cronScheduler == nil {
+		return fmt.Errorf("aether: %w: CronScheduler not configured, use WithCronScheduler()", ErrNotSupported)
+	}
+
+	e.cronScheduler.Remove(cronID)
+	if err := e.store.DeleteCronWorkflow(ctx, cronID); err != nil {
+		return fmt.Errorf("aether: %w", err)
+	}
+	return nil
+}
+
+// --- Control ---
 
 // Resume re-dispatches a suspended task with an incremental payload.
 //
@@ -411,6 +496,8 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 
 	return nil
 }
+
+// --- Task callbacks ---
 
 // OnTaskStarted is invoked when a worker begins executing a task.
 // It transitions the leaf task itself, its ancestor containers (DAG/Loop), and
@@ -726,30 +813,7 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	}
 }
 
-// Start launches the Engine's background services (currently: timeout watchdog).
-// It returns immediately; all background goroutines run until Stop is called or
-// the parent ctx is cancelled. Pair every Start call with a Stop call.
-func (e *Engine) Start(ctx context.Context) error {
-	innerCtx, cancel := context.WithCancel(ctx)
-	e.stopFn = cancel
-	e.stopOnce = sync.Once{} // reset for a new Start cycle
-	if err := e.timeoutWatcher.Start(innerCtx); err != nil {
-		cancel()
-		return fmt.Errorf("aether: start timeout watcher: %w", err)
-	}
-	go e.watchTimeouts(innerCtx)
-	return nil
-}
-
-// Stop shuts down all background services started by Start.
-// It is safe to call Stop concurrently or multiple times; only the first call takes effect.
-func (e *Engine) Stop() {
-	e.stopOnce.Do(func() {
-		if e.stopFn != nil {
-			e.stopFn()
-		}
-	})
-}
+// --- Timeout callbacks ---
 
 // OnTaskTimeout is invoked (by the watchdog) when a TaskRun has exceeded its Deadline.
 //
@@ -858,3 +922,43 @@ func (e *Engine) OnWorkflowTimeout(ctx context.Context, workflowRunID string) {
 	}
 }
 
+// --- Lifecycle ---
+
+// Start launches the Engine's background services (currently: timeout watchdog).
+// It returns immediately; all background goroutines run until Stop is called or
+// the parent ctx is cancelled. Pair every Start call with a Stop call.
+func (e *Engine) Start(ctx context.Context) error {
+	innerCtx, cancel := context.WithCancel(ctx)
+	e.stopFn = cancel
+	e.stopOnce = sync.Once{} // reset for a new Start cycle
+	if err := e.timeoutWatcher.Start(innerCtx); err != nil {
+		cancel()
+		return fmt.Errorf("aether: start timeout watcher: %w", err)
+	}
+	go e.watchTimeouts(innerCtx)
+
+	// Reload active CronWorkflows and re-register with the scheduler (crash recovery).
+	if e.cronScheduler != nil {
+		if err := e.reloadCronWorkflows(ctx); err != nil {
+			e.reportError(ctx, err, errsink.ErrorContext{
+				Operation: "start.reloadCronWorkflows", Severity: errsink.SeverityWarning,
+			})
+		}
+	}
+	return nil
+}
+
+// Stop shuts down all background services started by Start.
+// It is safe to call Stop concurrently or multiple times; only the first call takes effect.
+func (e *Engine) Stop() {
+	e.stopOnce.Do(func() {
+		if e.stopFn != nil {
+			e.stopFn()
+		}
+		if e.cronScheduler != nil {
+			if closer, ok := e.cronScheduler.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
+	})
+}

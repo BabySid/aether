@@ -35,4 +35,4 @@ specs/todo.md
 specs/design-spec.md
 cmd/playground/playground
 cmd/playground/out.html
-playground
+/playground

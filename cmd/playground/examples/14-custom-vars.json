@@ -1,0 +1,62 @@
+{
+    "apiVersion": "aether/v1",
+    "kind": "Workflow",
+    "metadata": {
+        "name": "custom-vars",
+        "annotations": {
+            "description": "Custom vars.Source demo: system.* (built-in) and deploy.* (user-defined) variables injected via WithVarsSource and referenced as {{namespace.key}} in task arguments."
+        }
+    },
+    "spec": {
+        "entrypoint": "main",
+        "templates": [
+            {
+                "dag": {
+                    "name": "main",
+                    "tasks": [
+                        {
+                            "name": "report-env",
+                            "template": "env-reporter",
+                            "arguments": {
+                                "parameters": [
+                                    {"name": "os",      "valueFrom": {"parameter": "system.os"}},
+                                    {"name": "arch",    "valueFrom": {"parameter": "system.arch"}},
+                                    {"name": "cluster", "valueFrom": {"parameter": "deploy.cluster"}},
+                                    {"name": "region",  "valueFrom": {"parameter": "deploy.region"}},
+                                    {"name": "outputs", "value": [
+                                        {"name": "os",      "type": "string"},
+                                        {"name": "arch",    "type": "string"},
+                                        {"name": "cluster", "type": "string"},
+                                        {"name": "region",  "type": "string"}
+                                    ]}
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "task": {
+                    "name": "env-reporter",
+                    "inputs": {
+                        "parameters": [
+                            {"name": "os",      "type": "string"},
+                            {"name": "arch",    "type": "string"},
+                            {"name": "cluster", "type": "string"},
+                            {"name": "region",  "type": "string"}
+                        ]
+                    },
+                    "executor": {"type": "echo"},
+                    "outputs": {
+                        "parameters": [
+                            {"name": "os",      "type": "string"},
+                            {"name": "arch",    "type": "string"},
+                            {"name": "cluster", "type": "string"},
+                            {"name": "region",  "type": "string"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+}

@@ -1,0 +1,4 @@
+{
+    "skipIntegration": true,
+    "expectPhase": "Succeeded"
+}

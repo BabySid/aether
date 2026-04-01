@@ -18,3 +18,27 @@ func FillDefaults(wf *model.Workflow) {
 		wf.Spec.MaxNestedDepth = 3
 	}
 }
+
+// FillCronDefaults applies default values to a CronWorkflow.
+func FillCronDefaults(cw *model.CronWorkflow) {
+	if cw.Metadata.Namespace == "" {
+		cw.Metadata.Namespace = "default"
+	}
+	if cw.Spec.Timezone == "" {
+		cw.Spec.Timezone = "UTC"
+	}
+	if cw.Spec.ConcurrencyPolicy == "" {
+		cw.Spec.ConcurrencyPolicy = model.ConcurrencyAllow
+	}
+	if cw.Spec.SuccessfulJobsHistoryLimit == 0 {
+		cw.Spec.SuccessfulJobsHistoryLimit = 3
+	}
+	if cw.Spec.FailedJobsHistoryLimit == 0 {
+		cw.Spec.FailedJobsHistoryLimit = 1
+	}
+
+	// Fill defaults on the embedded WorkflowSpec.
+	tmpWf := &model.Workflow{Spec: cw.Spec.WorkflowSpec}
+	FillDefaults(tmpWf)
+	cw.Spec.WorkflowSpec = tmpWf.Spec
+}

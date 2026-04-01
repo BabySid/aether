@@ -22,6 +22,12 @@ type WorkflowExecution struct {
 	Tasks     []TaskExecution  // all task runs, in creation order
 }
 
+// CronWorkflowExecution is the read-only return type of Engine.GetCronWorkflow.
+type CronWorkflowExecution struct {
+	ID   string
+	Runs []WorkflowExecution
+}
+
 // TaskExecution is the read-only view of a single task run within a workflow.
 type TaskExecution struct {
 	// Immutable
