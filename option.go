@@ -69,14 +69,14 @@ func WithTaskBroker(b broker.TaskBroker) Option {
 }
 
 // WithArtifactStore sets the artifact store (optional).
-func WithArtifactStore(a artifact.Store) Option {
+func WithArtifactStore(a artifact.Repository) Option {
 	return func(e *Engine) {
 		e.artifactStore = a
 	}
 }
 
 // WithSecretStore sets the secret store (optional).
-func WithSecretStore(s secret.Store) Option {
+func WithSecretStore(s secret.Provider) Option {
 	return func(e *Engine) {
 		e.secretStore = s
 	}

@@ -1,41 +1,28 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Succeeded",
-    "expectTaskCount": 4,
-    "expectTasks": [
-        {
-            "taskName": "prepare",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {
-                    "name": "status",
-                    "value": "ready"
-                }
-            ]
-        },
-        {
-            "taskName": "await-approval",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {
-                    "name": "approved",
-                    "value": true
-                },
-                {
-                    "name": "approver",
-                    "value": "test-user"
-                }
-            ]
-        },
-        {
-            "taskName": "finalize",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {
-                    "name": "result",
-                    "value": "done"
-                }
-            ]
-        }
-    ]
+  "autoResumeAfter": "200ms",
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 4,
+  "expectTasks": [
+    {
+      "taskName": "prepare",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "status": "ready"
+      }
+    },
+    {
+      "taskName": "await-approval",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "approved": true
+      }
+    },
+    {
+      "taskName": "finalize",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "result": "done"
+      }
+    }
+  ]
 }

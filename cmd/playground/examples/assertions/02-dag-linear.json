@@ -5,50 +5,40 @@
     {
       "taskName": "main",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "summary",
-          "value": "processed 2 records"
-        },
-        {
-          "name": "sent",
-          "value": true
-        }
-      ]
+      "expectTemplateType": "dag",
+      "expectDepth": 0,
+      "expectOutputs": {
+        "summary": "processed 2 records",
+        "sent": true
+      }
     },
     {
       "taskName": "fetch",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "count",
-          "value": 2
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "count": 2
+      }
     },
     {
       "taskName": "transform",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "summary",
-          "value": "processed 2 records"
-        },
-        {
-          "name": "ok",
-          "value": true
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "summary": "processed 2 records",
+        "ok": true
+      }
     },
     {
       "taskName": "notify",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "sent",
-          "value": true
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "sent": true
+      }
     }
   ]
 }

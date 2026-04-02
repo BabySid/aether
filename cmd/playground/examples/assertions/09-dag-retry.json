@@ -1,19 +1,20 @@
 {
-    "expectPhase": "Succeeded",
-    "expectTasks": [
-        {
-            "taskName": "flaky",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {
-                    "name": "status",
-                    "value": "ok"
-                },
-                {
-                    "name": "attempt",
-                    "value": 3
-                }
-            ]
-        }
-    ]
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "flaky",
+      "expectPhase": "Succeeded",
+      "expectRetryCount": 2,
+      "expectOutputs": {
+        "status": "ok",
+        "attempt": 3
+      }
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag",
+      "expectDepth": 0
+    }
+  ]
 }

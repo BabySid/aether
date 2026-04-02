@@ -27,14 +27,14 @@ import (
 // modifying the template schema.
 type Binder struct {
 	eval        expr.Evaluator
-	secretStore secret.Store
+	secretStore secret.Provider
 	sink        errsink.ErrorSink
 }
 
 // NewBinder returns a Binder. eval, secretStore, and sink may be nil; they are
 // only required when resolving valueFrom.expression, valueFrom.secretKeyRef,
 // or reporting resolution warnings respectively.
-func NewBinder(eval expr.Evaluator, secretStore secret.Store, sink errsink.ErrorSink) *Binder {
+func NewBinder(eval expr.Evaluator, secretStore secret.Provider, sink errsink.ErrorSink) *Binder {
 	return &Binder{eval: eval, secretStore: secretStore, sink: sink}
 }
 

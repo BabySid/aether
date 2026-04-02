@@ -4,22 +4,20 @@
     {
       "taskName": "check",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "status",
-          "value": "ok"
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "status": "ok"
+      }
     },
     {
       "taskName": "path-ok",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "msg",
-          "value": "ok path executed"
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "msg": "ok path executed"
+      }
     },
     {
       "taskName": "path-fail",

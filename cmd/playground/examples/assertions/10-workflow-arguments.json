@@ -4,12 +4,15 @@
     {
       "taskName": "run",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "ran",
-          "value": true
-        }
-      ]
+      "expectOutputs": {
+        "ran": true
+      }
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag",
+      "expectDepth": 0
     }
   ]
 }

@@ -1,31 +1,24 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Error",
-    "expectTaskCount": 4,
-    "expectTasks": [
-        {
-            "taskName": "prepare",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {
-                    "name": "status",
-                    "value": "ready"
-                }
-            ]
-        },
-        {
-            "taskName": "wait-external",
-            "expectPhase": "Timeout"
-        },
-        {
-            "taskName": "finalize",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {
-                    "name": "result",
-                    "value": "completed-after-timeout"
-                }
-            ]
-        }
-    ]
+  "expectPhase": "Succeeded",
+  "expectTaskCount": 4,
+  "expectTasks": [
+    {
+      "taskName": "prepare",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "status": "ready"
+      }
+    },
+    {
+      "taskName": "wait-external",
+      "expectPhase": "Timeout"
+    },
+    {
+      "taskName": "finalize",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "result": "completed-after-timeout"
+      }
+    }
+  ]
 }

@@ -1,15 +1,15 @@
 {
-    "skipIntegration": true,
-    "cronTriggerCount": 1,
-    "expectRunCount": 1,
-    "expectRunPhase": "Succeeded",
-    "expectTasks": [
-        {
-            "taskName": "main",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {"name": "result", "value": "cron-ok"}
-            ]
-        }
-    ]
+  "cronTriggerCount": 1,
+  "expectRunCount": 1,
+  "expectRunPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "task",
+      "expectOutputs": {
+        "result": "cron-ok"
+      }
+    }
+  ]
 }

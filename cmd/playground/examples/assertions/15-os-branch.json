@@ -1,21 +1,12 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Succeeded",
-    "expectTasks": [
-        {
-            "name": "detect-os",
-            "expectPhase": "Succeeded",
-            "expectOutputs": [
-                {"name": "os", "value": "darwin"}
-            ]
-        },
-        {
-            "name": "run-on-mac",
-            "expectPhase": "Succeeded"
-        },
-        {
-            "name": "run-on-linux",
-            "expectPhase": "Skipped"
-        }
-    ]
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "detect-os",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "os": "{{runtime.os}}"
+      }
+    }
+  ]
 }

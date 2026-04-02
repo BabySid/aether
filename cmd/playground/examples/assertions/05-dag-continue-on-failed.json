@@ -4,12 +4,9 @@
     {
       "taskName": "step-a",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "status",
-          "value": "ok"
-        }
-      ]
+      "expectOutputs": {
+        "status": "ok"
+      }
     },
     {
       "taskName": "step-b",
@@ -18,12 +15,9 @@
     {
       "taskName": "step-c",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "status",
-          "value": "ok"
-        }
-      ]
+      "expectOutputs": {
+        "status": "ok"
+      }
     },
     {
       "taskName": "main",

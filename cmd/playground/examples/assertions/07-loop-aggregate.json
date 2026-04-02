@@ -5,48 +5,31 @@
     {
       "taskName": "score-item",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "score",
-          "value": 95
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectOutputs": {
+        "score": 95
+      }
     },
     {
       "taskName": "summarize",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "avg",
-          "value": 95
-        },
-        {
-          "name": "total",
-          "value": 3
-        },
-        {
-          "name": "ok",
-          "value": true
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectOutputs": {
+        "avg": 95,
+        "total": 3,
+        "ok": true
+      }
     },
     {
       "taskName": "pipeline",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "avg",
-          "value": 95
-        },
-        {
-          "name": "total",
-          "value": 3
-        },
-        {
-          "name": "ok",
-          "value": true
-        }
-      ]
+      "expectTemplateType": "dag",
+      "expectDepth": 0,
+      "expectOutputs": {
+        "avg": 95,
+        "total": 3,
+        "ok": true
+      }
     }
   ]
 }

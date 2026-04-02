@@ -10,8 +10,6 @@
 //
 //   - suspend (bool): when true, returns ExecCodeSuspended on first call.
 //     Call eng.Resume() with {"__resumed": true} to unblock.
-//   - autoResumeAfter (string): duration (e.g. "1s"); LocalBroker auto-calls
-//     Resume() after the delay. Playground-only convenience.
 //   - failCount (int): return ExecCodeFailed on the first N attempts.
 //   - outputs (array): JSON array of {name, type, value?} output declarations.
 //
@@ -62,10 +60,9 @@ const resumedMarker = "__resumed"
 
 // echoInputParams are the well-known control inputs for the echo executor.
 const (
-	echoInputSuspend         = "suspend"
-	echoInputAutoResumeAfter = "auto-resume-after"
-	echoInputFailCount       = "fail-count"
-	echoInputOutputs         = "outputs"
+	echoInputSuspend   = "suspend"
+	echoInputFailCount = "fail-count"
+	echoInputOutputs   = "outputs"
 )
 
 // zeroValueFor returns the JSON zero-value for each supported type.
@@ -151,8 +148,6 @@ func (e *EchoExecutor) Execute(_ context.Context, req *executor.ExecuteRequest) 
 			case echoInputSuspend:
 				_ = json.Unmarshal(p.Value, &suspend)
 				continue // control param, not echoed
-			case echoInputAutoResumeAfter:
-				continue // consumed by LocalBroker, not echoed
 			case echoInputFailCount:
 				_ = json.Unmarshal(p.Value, &failCount)
 				continue // control param, not echoed

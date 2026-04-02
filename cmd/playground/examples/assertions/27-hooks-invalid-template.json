@@ -1,4 +1,3 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Error"
+  "expectSubmitError": "must be a task template"
 }

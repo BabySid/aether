@@ -3,11 +3,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"sync"
-	"time"
 
 	"github.com/BabySid/aether/broker"
 	"github.com/BabySid/aether/executor"
@@ -15,31 +12,11 @@ import (
 	"github.com/BabySid/aether/model"
 )
 
-// findInputParam returns the raw JSON value of the named parameter from inputs, or nil.
-func findInputParam(inputs *model.Inputs, name string) json.RawMessage {
-	if inputs == nil {
-		return nil
-	}
-	for _, p := range inputs.Parameters {
-		if p.Name == name {
-			return p.Value
-		}
-	}
-	return nil
-}
-
-// ResumeFunc is the callback used by LocalBroker to trigger an automatic
-// resume after a task returns ExecCodeSuspended with autoResumeAfter set.
-// It mirrors aether.Engine.Resume: (ctx, workflowRunID, taskID, payload).
-type ResumeFunc func(ctx context.Context, workflowRunID, taskID string, payload map[string]any) error
-
 // LocalBroker executes tasks in-process using goroutines.
 type LocalBroker struct {
 	registry     *executor.Registry
 	startHandler broker.StartHandler
 	handler      broker.CompletionHandler
-	// resumeFn, when set, is called by the auto-resume goroutine.
-	resumeFn ResumeFunc
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
@@ -55,11 +32,6 @@ func NewLocalBroker(reg *executor.Registry, startHandler broker.StartHandler, ha
 		handler:      handler,
 		cancels:      make(map[string]context.CancelFunc),
 	}
-}
-
-// SetResumeFunc wires the auto-resume callback. Must be called before Submit.
-func (b *LocalBroker) SetResumeFunc(fn ResumeFunc) {
-	b.resumeFn = fn
 }
 
 func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssignment) error {
@@ -154,42 +126,6 @@ func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssig
 
 		if b.handler != nil {
 			b.handler(ctx, taskResult)
-		}
-
-		// Auto-resume: if the executor returned Suspended and inputs contain
-		// autoResumeAfter, spawn a goroutine that calls resumeFn after the delay.
-		// This lets playground CLI demonstrate the full suspend→resume flow without
-		// requiring external tooling or interactive input.
-		if execOutputs != nil && execOutputs.Code == model.ExecCodeSuspended && b.resumeFn != nil {
-			var autoResumeAfter string
-			if raw := findInputParam(assignment.Inputs, echoInputAutoResumeAfter); len(raw) > 0 {
-				_ = json.Unmarshal(raw, &autoResumeAfter)
-			}
-			if autoResumeAfter != "" {
-				delay, parseErr := internal.ParseDuration(autoResumeAfter)
-				if parseErr == nil && delay > 0 {
-					wfRunID := assignment.WorkflowRunID
-					taskRunID := assignment.TaskRunID
-					taskName := assignment.TaskName
-					resumeFn := b.resumeFn
-					b.wg.Add(1)
-					go func() {
-						defer b.wg.Done()
-						log.Printf("[echo] taskRunID=%s taskName=%s  auto-resume scheduled in %s",
-							taskRunID, taskName, delay)
-						select {
-						case <-time.After(delay):
-						case <-ctx.Done():
-							return
-						}
-						log.Printf("[echo] taskRunID=%s taskName=%s  auto-resume firing",
-							taskRunID, taskName)
-						_ = resumeFn(ctx, wfRunID, taskRunID, map[string]any{
-							resumedMarker: true,
-						})
-					}()
-				}
-			}
 		}
 	}()
 

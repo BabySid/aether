@@ -1,8 +1,24 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Succeeded",
-    "expectTasks": [
-        {"taskName": "step-a", "expectPhase": "Succeeded"},
-        {"taskName": "step-b", "expectPhase": "Succeeded"}
-    ]
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "step-a",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "status": "done"
+      }
+    },
+    {
+      "taskName": "step-b",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "status": "done"
+      }
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag"
+    }
+  ]
 }

@@ -5,34 +5,15 @@
     {
       "taskName": "greet",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "message",
-          "value": "Hello, Alice!"
-        },
-        {
-          "name": "code",
-          "value": 200
-        },
-        {
-          "name": "ok",
-          "value": true
-        },
-        {
-          "name": "tags",
-          "value": [
-            "greet",
-            "demo"
-          ]
-        },
-        {
-          "name": "meta",
-          "value": {
-            "version": "1.0",
-            "env": "test"
-          }
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 0,
+      "expectOutputs": {
+        "message": "Hello, Alice!",
+        "code": 200,
+        "ok": true,
+        "tags": ["greet", "demo"],
+        "meta": {"version": "1.0", "env": "test"}
+      }
     }
   ]
 }

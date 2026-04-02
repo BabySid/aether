@@ -1,4 +1,16 @@
 {
   "expectPhase": "Succeeded",
-  "expectTaskCount": 4
+  "expectTaskCount": 4,
+  "expectTasks": [
+    {
+      "taskName": "step",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "task"
+    },
+    {
+      "taskName": "repeat-loop",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "loop"
+    }
+  ]
 }

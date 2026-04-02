@@ -4,20 +4,22 @@
     {
       "taskName": "produce",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "files", "value": ["data-1.csv", "data-2.csv"]}
-      ]
+      "expectOutputs": {
+        "files": ["data-1.csv", "data-2.csv"]
+      }
     },
     {
       "taskName": "process",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "processed", "value": [true, true]}
-      ]
+      "expectTemplateType": "loop",
+      "expectOutputs": {
+        "processed": [true, true]
+      }
     },
     {
       "taskName": "pipeline",
-      "expectPhase": "Succeeded"
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag"
     }
   ]
 }

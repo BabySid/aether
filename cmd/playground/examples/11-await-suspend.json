@@ -30,8 +30,7 @@
                             "dependencies": ["prepare"],
                             "inputs": {
                                 "parameters": [
-                                    {"name": "suspend",           "value": true},
-                                    {"name": "auto-resume-after", "value": "1s"},
+                                    {"name": "suspend", "value": true},
                                     {
                                         "name": "outputs",
                                         "value": [

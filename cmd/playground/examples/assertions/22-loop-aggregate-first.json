@@ -5,9 +5,10 @@
     {
       "taskName": "run-loop",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "result", "value": "alpha"}
-      ]
+      "expectTemplateType": "loop",
+      "expectOutputs": {
+        "result": "alpha"
+      }
     }
   ]
 }

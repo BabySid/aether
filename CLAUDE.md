@@ -50,8 +50,8 @@ The core engine (`package aether`) depends only on **interfaces**. All implement
 - `expr.Evaluator` — expression evaluation (`when`, `repeatCondition`, `phaseConditions`)
 - `hook.Notifier` — lifecycle notifications
 - `idgen.Generator` — unique ID generation
-- `artifact.Store` — artifact upload/download
-- `secret.Store` — secret retrieval
+- `artifact.Repository` — artifact upload/download
+- `secret.Provider` — secret retrieval
 - `timeout.Watcher` — deadline expiry detection
 - `vars.Source` — variable injection (e.g. `system.os`, `system.arch`)
 

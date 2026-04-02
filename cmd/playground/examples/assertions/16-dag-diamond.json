@@ -5,37 +5,38 @@
     {
       "taskName": "start",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "seed", "value": 42}
-      ]
+      "expectOutputs": {
+        "seed": 42
+      }
     },
     {
       "taskName": "left",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "result", "value": "left-done"}
-      ]
+      "expectOutputs": {
+        "result": "left-done"
+      }
     },
     {
       "taskName": "right",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "result", "value": "right-done"}
-      ]
+      "expectOutputs": {
+        "result": "right-done"
+      }
     },
     {
       "taskName": "join",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "summary", "value": "merged"}
-      ]
+      "expectOutputs": {
+        "summary": "merged"
+      }
     },
     {
       "taskName": "main",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "summary", "value": "merged"}
-      ]
+      "expectTemplateType": "dag",
+      "expectOutputs": {
+        "summary": "merged"
+      }
     }
   ]
 }

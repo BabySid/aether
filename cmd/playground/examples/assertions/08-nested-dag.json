@@ -5,35 +5,29 @@
     {
       "taskName": "step1",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "val",
-          "value": 42
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 2,
+      "expectOutputs": {
+        "val": 42
+      }
     },
     {
       "taskName": "step2",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "result",
-          "value": {
-            "val": 42,
-            "doubled": 84
-          }
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 2,
+      "expectOutputs": {
+        "result": {"val": 42, "doubled": 84}
+      }
     },
     {
       "taskName": "final",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "done",
-          "value": true
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "done": true
+      }
     }
   ]
 }

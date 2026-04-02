@@ -5,20 +5,21 @@
     {
       "taskName": "task-a",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "result", "value": "a-done"}
-      ]
+      "expectOutputs": {
+        "result": "a-done"
+      }
     },
     {
       "taskName": "task-b",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "result", "value": "b-done"}
-      ]
+      "expectOutputs": {
+        "result": "b-done"
+      }
     },
     {
       "taskName": "main",
-      "expectPhase": "Succeeded"
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag"
     }
   ]
 }

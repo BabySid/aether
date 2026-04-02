@@ -19,7 +19,7 @@ func (f *fakeEvaluator) Eval(_ context.Context, expr string, env map[string]any)
 	return f.fn(expr, env)
 }
 
-// fakeSecretStore implements secret.Store for tests.
+// fakeSecretStore implements secret.Provider for tests.
 type fakeSecretStore struct {
 	secrets map[string]string // key = "name/key"
 }

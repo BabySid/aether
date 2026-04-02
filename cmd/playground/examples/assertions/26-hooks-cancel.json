@@ -1,4 +1,22 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Cancelled"
+  "autoCancelAfter": "200ms",
+  "expectPhase": "Cancelled",
+  "expectTasks": [
+    {
+      "taskName": "prepare",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "status": "ok"
+      }
+    },
+    {
+      "taskName": "wait",
+      "expectPhase": "Cancelled"
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Cancelled",
+      "expectTemplateType": "dag"
+    }
+  ]
 }

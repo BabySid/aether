@@ -5,56 +5,40 @@
     {
       "taskName": "main",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "merged",
-          "value": true
-        },
-        {
-          "name": "total",
-          "value": 30
-        }
-      ]
+      "expectTemplateType": "dag",
+      "expectDepth": 0,
+      "expectOutputs": {
+        "merged": true,
+        "total": 30
+      }
     },
     {
       "taskName": "task-a",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "result",
-          "value": {
-            "source": "A",
-            "value": 10
-          }
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "result": {"source": "A", "value": 10}
+      }
     },
     {
       "taskName": "task-b",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "result",
-          "value": {
-            "source": "B",
-            "value": 20
-          }
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "result": {"source": "B", "value": 20}
+      }
     },
     {
       "taskName": "join",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {
-          "name": "merged",
-          "value": true
-        },
-        {
-          "name": "total",
-          "value": 30
-        }
-      ]
+      "expectTemplateType": "task",
+      "expectDepth": 1,
+      "expectOutputs": {
+        "merged": true,
+        "total": 30
+      }
     }
   ]
 }

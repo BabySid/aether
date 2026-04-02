@@ -1,10 +1,15 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Succeeded",
-    "expectTasks": [
-        {
-            "taskName": "report-env",
-            "expectPhase": "Succeeded"
-        }
-    ]
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "report-env",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "os": "{{runtime.os}}",
+        "arch": "{{runtime.arch}}",
+        "cluster": "prod-cluster",
+        "region": "ap-east-1"
+      }
+    }
+  ]
 }

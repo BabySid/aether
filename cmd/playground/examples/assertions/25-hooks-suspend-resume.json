@@ -1,4 +1,18 @@
 {
-    "skipIntegration": true,
-    "expectPhase": "Succeeded"
+  "autoResumeAfter": "200ms",
+  "expectPhase": "Succeeded",
+  "expectTasks": [
+    {
+      "taskName": "approval",
+      "expectPhase": "Succeeded",
+      "expectOutputs": {
+        "approved": true
+      }
+    },
+    {
+      "taskName": "main",
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag"
+    }
+  ]
 }

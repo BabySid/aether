@@ -37,8 +37,8 @@ type Engine struct {
 
 	// --- optional ---
 	exprEvaluator  expr.Evaluator
-	artifactStore  artifact.Store
-	secretStore    secret.Store
+	artifactStore  artifact.Repository
+	secretStore    secret.Provider
 	hookNotifier   hook.Notifier
 	errorSink      errsink.ErrorSink
 	timeoutWatcher timeout.Watcher

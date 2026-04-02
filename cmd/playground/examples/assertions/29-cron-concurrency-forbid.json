@@ -1,6 +1,5 @@
 {
-    "skipIntegration": true,
-    "cronTriggerCount": 2,
-    "expectRunCount": 1,
-    "expectRunPhase": "Running"
+  "cronTriggerCount": 2,
+  "expectRunCount": 1,
+  "expectRunPhase": "Running"
 }

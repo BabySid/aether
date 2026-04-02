@@ -7,8 +7,8 @@ import (
 	"io"
 )
 
-// Store manages artifact upload and download (optional).
-type Store interface {
+// Repository manages artifact upload and download (optional).
+type Repository interface {
 	// Type returns the storage type identifier (e.g. "oss", "local", "http").
 	Type() string
 

@@ -3,11 +3,13 @@
   "expectTasks": [
     {
       "taskName": "doomed",
-      "expectPhase": "Failed"
+      "expectPhase": "Failed",
+      "expectRetryCount": 2
     },
     {
       "taskName": "main",
-      "expectPhase": "Failed"
+      "expectPhase": "Failed",
+      "expectTemplateType": "dag"
     }
   ]
 }

@@ -4,9 +4,9 @@
     {
       "taskName": "setup",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "status", "value": "ok"}
-      ]
+      "expectOutputs": {
+        "status": "ok"
+      }
     },
     {
       "taskName": "risky",
@@ -15,9 +15,9 @@
     {
       "taskName": "cleanup",
       "expectPhase": "Succeeded",
-      "expectOutputs": [
-        {"name": "status", "value": "ok"}
-      ]
+      "expectOutputs": {
+        "status": "ok"
+      }
     },
     {
       "taskName": "strict",
@@ -25,7 +25,8 @@
     },
     {
       "taskName": "main",
-      "expectPhase": "Succeeded"
+      "expectPhase": "Succeeded",
+      "expectTemplateType": "dag"
     }
   ]
 }
