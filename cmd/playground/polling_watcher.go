@@ -24,6 +24,7 @@ type PollingWatcher struct {
 	interval time.Duration
 	events   chan timeout.TimeoutEvent
 	started  bool
+	cancel   context.CancelFunc
 }
 
 // newPollingWatcher returns a PollingWatcher backed by the given MemoryStore.
@@ -43,8 +44,17 @@ func (w *PollingWatcher) Start(ctx context.Context) error {
 		return nil
 	}
 	w.started = true
-	go w.loop(ctx)
+	innerCtx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+	go w.loop(innerCtx)
 	return nil
+}
+
+// Stop implements timeout.Watcher.
+func (w *PollingWatcher) Stop() {
+	if w.cancel != nil {
+		w.cancel()
+	}
 }
 
 // Events implements timeout.Watcher.

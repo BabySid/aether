@@ -29,27 +29,25 @@ import (
 // Engine is the core workflow scheduling engine.
 // All dependencies are injected via Option.
 type Engine struct {
-	store          store.Store
-	executorReg    *executor.Registry
+	// --- required ---
+	store       store.Store
+	executorReg *executor.Registry
+	idGen       idgen.Generator
+	taskBroker  broker.TaskBroker
+
+	// --- optional ---
 	exprEvaluator  expr.Evaluator
-	taskBroker     broker.TaskBroker
 	artifactStore  artifact.Store
 	secretStore    secret.Store
 	hookNotifier   hook.Notifier
 	errorSink      errsink.ErrorSink
-	idGen          idgen.Generator
 	timeoutWatcher timeout.Watcher
-	stopOnce sync.Once           // ensures Stop logic runs exactly once
+	cronScheduler  cron.Scheduler
+	varsSources    []vars.Source
+
+	// --- internal state ---
+	stopOnce sync.Once          // ensures Stop logic runs exactly once
 	stopFn   context.CancelFunc // set by Start; called by Stop
-
-	// varsSources holds engine-level Source registrations (global, per-engine).
-	// These are injected into every VarBuilder via newVarBuilder(), giving each
-	// workflow run access to the variables they provide (e.g. system.os, system.arch).
-	varsSources []vars.Source
-
-	// cronScheduler is the optional cron scheduling backend.
-	// Nil when CronWorkflow support is not configured.
-	cronScheduler cron.Scheduler
 }
 
 // New creates an Engine with the given options.
@@ -72,10 +70,6 @@ func New(opts ...Option) (*Engine, error) {
 	if e.taskBroker == nil {
 		return nil, fmt.Errorf("aether: %w: TaskBroker is required, use WithTaskBroker()", ErrValidation)
 	}
-	if e.timeoutWatcher == nil {
-		return nil, fmt.Errorf("aether: %w: TimeoutWatcher is required, use WithTimeoutWatcher()", ErrValidation)
-	}
-
 	return e, nil
 }
 
@@ -924,21 +918,27 @@ func (e *Engine) OnWorkflowTimeout(ctx context.Context, workflowRunID string) {
 
 // --- Lifecycle ---
 
-// Start launches the Engine's background services (currently: timeout watchdog).
+// Start launches the Engine's background services (timeout watchdog, cron scheduler).
 // It returns immediately; all background goroutines run until Stop is called or
 // the parent ctx is cancelled. Pair every Start call with a Stop call.
 func (e *Engine) Start(ctx context.Context) error {
 	innerCtx, cancel := context.WithCancel(ctx)
 	e.stopFn = cancel
 	e.stopOnce = sync.Once{} // reset for a new Start cycle
-	if err := e.timeoutWatcher.Start(innerCtx); err != nil {
-		cancel()
-		return fmt.Errorf("aether: start timeout watcher: %w", err)
+	if e.timeoutWatcher != nil {
+		if err := e.timeoutWatcher.Start(innerCtx); err != nil {
+			cancel()
+			return fmt.Errorf("aether: start timeout watcher: %w", err)
+		}
+		go e.watchTimeouts(innerCtx)
 	}
-	go e.watchTimeouts(innerCtx)
 
 	// Reload active CronWorkflows and re-register with the scheduler (crash recovery).
 	if e.cronScheduler != nil {
+		if err := e.cronScheduler.Start(innerCtx); err != nil {
+			cancel()
+			return fmt.Errorf("aether: start cron scheduler: %w", err)
+		}
 		if err := e.reloadCronWorkflows(ctx); err != nil {
 			e.reportError(ctx, err, errsink.ErrorContext{
 				Operation: "start.reloadCronWorkflows", Severity: errsink.SeverityWarning,
@@ -955,10 +955,11 @@ func (e *Engine) Stop() {
 		if e.stopFn != nil {
 			e.stopFn()
 		}
+		if e.timeoutWatcher != nil {
+			e.timeoutWatcher.Stop()
+		}
 		if e.cronScheduler != nil {
-			if closer, ok := e.cronScheduler.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
+			e.cronScheduler.Stop()
 		}
 	})
 }

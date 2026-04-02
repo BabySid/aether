@@ -59,7 +59,8 @@ func (s *testScheduler) Has(id string) bool {
 	return ok
 }
 
-func (s *testScheduler) Close() error { return nil }
+func (s *testScheduler) Start(_ context.Context) error { return nil }
+func (s *testScheduler) Stop()                         {}
 
 // newCronEngineBundle creates an engine with a testScheduler for CronWorkflow testing.
 func newCronEngineBundle(t *testing.T) (*aether.Engine, *testScheduler, *MemoryStore) {

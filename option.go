@@ -136,7 +136,6 @@ func WithVarsSource(p vars.Source) Option {
 // WithCronScheduler sets the cron scheduling backend (optional).
 // When configured, CronWorkflow methods (SubmitCronWorkflow, GetCronWorkflow, etc.)
 // become available. Without it, those methods return ErrNotSupported.
-// If the Scheduler implementation also implements io.Closer, Engine.Stop() will call Close().
 func WithCronScheduler(s cron.Scheduler) Option {
 	return func(e *Engine) {
 		e.cronScheduler = s

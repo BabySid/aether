@@ -43,9 +43,13 @@ type TimeoutEvent struct {
 //	<-watcher.Events()   — consume events in a select loop.
 type Watcher interface {
 	// Start launches background detection.  Returns immediately; detection
-	// runs in one or more goroutines until ctx is cancelled.
+	// runs in one or more goroutines until Stop is called.
 	// Calling Start more than once is a no-op (implementations may log a warning).
 	Start(ctx context.Context) error
+
+	// Stop shuts down background detection.
+	// It is safe to call Stop multiple times; only the first call takes effect.
+	Stop()
 
 	// Events returns the channel on which TimeoutEvents are delivered.
 	// The channel is never closed; callers should stop consuming when ctx is done.
