@@ -147,7 +147,7 @@ func (b *LocalBroker) FetchTask(ctx context.Context, _ string) (*broker.TaskAssi
 	return nil, ctx.Err()
 }
 
-func (b *LocalBroker) Heartbeat(_ context.Context, _ string, _ string) error { return nil }
+func (b *LocalBroker) Heartbeat(_ context.Context, _ string, _ map[string]any) error { return nil }
 
 func (b *LocalBroker) StartTask(ctx context.Context, taskRunID string, _ string) error {
 	if b.startHandler != nil {

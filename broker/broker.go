@@ -46,9 +46,10 @@ type TaskBroker interface {
 	//   - distributed: publishes to MQ, the consumer calls engine.OnTaskStarted
 	StartTask(ctx context.Context, taskRunID string, workerID string) error
 
-	// Heartbeat reports that a worker is still alive and working on the task.
+	// Heartbeat reports that a worker is still alive.
+	// meta carries optional extension data (e.g. load, running task list, resource usage).
 	// Implementations should treat this as idempotent.
-	Heartbeat(ctx context.Context, taskRunID string, workerID string) error
+	Heartbeat(ctx context.Context, workerID string, meta map[string]any) error
 
 	// CompleteTask reports the final execution result of a task.
 	// Called by the worker after task execution finishes.
