@@ -23,6 +23,7 @@ import (
 	"github.com/BabySid/aether/secret"
 	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/timeout"
+	"github.com/BabySid/aether/worker"
 	"github.com/BabySid/aether/vars"
 )
 
@@ -37,7 +38,8 @@ type Engine struct {
 
 	// --- optional ---
 	exprEvaluator  expr.Evaluator
-	artifactStore  artifact.Repository
+	artifactStore   artifact.Repository // TODO: wire into task execution when artifact support is implemented
+	workerRegistry  worker.Registry     // optional: worker registration and discovery
 	secretStore    secret.Provider
 	hookNotifier   hook.Notifier
 	errorSink      errsink.ErrorSink
@@ -46,8 +48,9 @@ type Engine struct {
 	varsSources    []vars.Source
 
 	// --- internal state ---
-	stopOnce sync.Once          // ensures Stop logic runs exactly once
-	stopFn   context.CancelFunc // set by Start; called by Stop
+	lifecycleMu sync.Mutex         // guards stopped/stopFn during Start/Stop
+	stopped     bool               // true after Stop runs; reset by Start
+	stopFn      context.CancelFunc // set by Start; called by Stop
 }
 
 // New creates an Engine with the given options.
@@ -215,6 +218,10 @@ func (e *Engine) GetCronWorkflow(ctx context.Context, cronID string) (*CronWorkf
 	for _, run := range runs {
 		wfExec, err := e.Get(ctx, run.RunID)
 		if err != nil {
+			e.reportError(ctx, err, errsink.ErrorContext{
+				WorkflowRunID: run.RunID,
+				Operation:     "getCronWorkflowExecution.loadRun", Severity: errsink.SeverityWarning,
+			})
 			continue
 		}
 		exec.Runs = append(exec.Runs, *wfExec)
@@ -476,11 +483,7 @@ func (e *Engine) Cancel(ctx context.Context, workflowID string) error {
 			}
 			if tr.ParentRunID != "" {
 				if parentTR, pErr := e.store.GetTaskRun(ctx, tr.ParentRunID); pErr == nil {
-					parentTmpl := internal.FindTemplate(&wf, parentTR.TemplateName)
-					if parentTmpl != nil && parentTmpl.DAG != nil {
-						task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
-						internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, workflowID, tr.RunID, model.PhaseCancelled)
-					}
+					e.fireTaskHookFromParent(ctx, &wf, parentTR, tr, workflowID, model.PhaseCancelled)
 				}
 			}
 		}
@@ -533,20 +536,17 @@ func (e *Engine) OnTaskStarted(ctx context.Context, taskRunID string) {
 		})
 	}
 
-	// 3. Fire workflow-level OnStart hook (exactly once, when first promoted to Running).
-	if wfPromoted {
+	// 3. Fire hooks: workflow-level OnStart (once) and task-level OnStart.
+	// Load the workflow once and reuse for both hook lookups.
+	if wfPromoted || tr.ParentRunID != "" {
 		if wf, loadErr := e.loadWorkflow(ctx, tr.WorkflowRunID); loadErr == nil {
-			internal.FireWorkflowHooks(ctx, e.hookNotifier, e.errorSink, wf, tr.WorkflowRunID, model.PhaseRunning)
-		}
-	}
-
-	// 4. Fire task-level OnStart hook.
-	if wf, loadErr := e.loadWorkflow(ctx, tr.WorkflowRunID); loadErr == nil && tr.ParentRunID != "" {
-		if parentTR, parentErr := e.store.GetTaskRun(ctx, tr.ParentRunID); parentErr == nil {
-			parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
-			if parentTmpl != nil && parentTmpl.DAG != nil {
-				task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
-				internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, tr.WorkflowRunID, taskRunID, model.PhaseRunning)
+			if wfPromoted {
+				internal.FireWorkflowHooks(ctx, e.hookNotifier, e.errorSink, wf, tr.WorkflowRunID, model.PhaseRunning)
+			}
+			if tr.ParentRunID != "" {
+				if parentTR, parentErr := e.store.GetTaskRun(ctx, tr.ParentRunID); parentErr == nil {
+					e.fireTaskHookFromParent(ctx, wf, parentTR, tr, tr.WorkflowRunID, model.PhaseRunning)
+				}
 			}
 		}
 	}
@@ -649,11 +649,7 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 		}
 		// Fire task-level OnSuspend hook.
 		if parentTR != nil {
-			parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
-			if parentTmpl != nil && parentTmpl.DAG != nil {
-				task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
-				internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, result.WorkflowRunID, tr.RunID, model.PhaseSuspended)
-			}
+			e.fireTaskHookFromParent(ctx, wf, parentTR, tr, result.WorkflowRunID, model.PhaseSuspended)
 		}
 		return
 	}
@@ -788,11 +784,7 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 	// container, so we use its TemplateName to find the correct DAG and task node —
 	// this works for tasks at any nesting depth, not just the entrypoint DAG.
 	if parentTR != nil {
-		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
-		if parentTmpl != nil && parentTmpl.DAG != nil {
-			task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
-			internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, result.WorkflowRunID, tr.RunID, phase)
-		}
+		e.fireTaskHookFromParent(ctx, wf, parentTR, tr, result.WorkflowRunID, phase)
 	}
 
 	// 5. Re-advance the scope this task belongs to.
@@ -922,9 +914,11 @@ func (e *Engine) OnWorkflowTimeout(ctx context.Context, workflowRunID string) {
 // It returns immediately; all background goroutines run until Stop is called or
 // the parent ctx is cancelled. Pair every Start call with a Stop call.
 func (e *Engine) Start(ctx context.Context) error {
+	e.lifecycleMu.Lock()
 	innerCtx, cancel := context.WithCancel(ctx)
 	e.stopFn = cancel
-	e.stopOnce = sync.Once{} // reset for a new Start cycle
+	e.stopped = false // reset for a new Start cycle
+	e.lifecycleMu.Unlock()
 	if e.timeoutWatcher != nil {
 		if err := e.timeoutWatcher.Start(innerCtx); err != nil {
 			cancel()
@@ -951,15 +945,22 @@ func (e *Engine) Start(ctx context.Context) error {
 // Stop shuts down all background services started by Start.
 // It is safe to call Stop concurrently or multiple times; only the first call takes effect.
 func (e *Engine) Stop() {
-	e.stopOnce.Do(func() {
-		if e.stopFn != nil {
-			e.stopFn()
-		}
-		if e.timeoutWatcher != nil {
-			e.timeoutWatcher.Stop()
-		}
-		if e.cronScheduler != nil {
-			e.cronScheduler.Stop()
-		}
-	})
+	e.lifecycleMu.Lock()
+	if e.stopped {
+		e.lifecycleMu.Unlock()
+		return
+	}
+	e.stopped = true
+	stopFn := e.stopFn
+	e.lifecycleMu.Unlock()
+
+	if stopFn != nil {
+		stopFn()
+	}
+	if e.timeoutWatcher != nil {
+		e.timeoutWatcher.Stop()
+	}
+	if e.cronScheduler != nil {
+		e.cronScheduler.Stop()
+	}
 }

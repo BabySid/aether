@@ -121,7 +121,7 @@ func newEcho() *EchoExecutor { return &EchoExecutor{} }
 
 func (e *EchoExecutor) Type() string { return "echo" }
 
-// Schema: echo 的输出由 inputs.outputs 在运行时声明，使用 DynamicOutputs 哨兵。
+// Schema: echo outputs are declared at runtime via inputs.outputs, using the DynamicOutputs sentinel.
 func (e *EchoExecutor) Schema() model.ExecutorSchema {
 	return executor.SchemaOf[executor.DynamicOutputs, executor.DynamicOutputs](
 		"echo", "1.0", "Echoes inputs and produces declared outputs",

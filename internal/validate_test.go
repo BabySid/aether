@@ -146,7 +146,7 @@ func TestValidate_TemplateMustHaveExactlyOneType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for template with both dag and task")
 	}
-	assertContains(t, err.Error(), "must have exactly one of dag/executor/loop")
+	assertContains(t, err.Error(), "must have exactly one of dag/task/loop")
 }
 
 func TestValidate_TemplateBothDAGAndExecutor(t *testing.T) {
@@ -165,7 +165,7 @@ func TestValidate_TemplateBothDAGAndExecutor(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for template with both dag and executor")
 	}
-	assertContains(t, err.Error(), "must have exactly one of dag/executor/loop")
+	assertContains(t, err.Error(), "must have exactly one of dag/task/loop")
 }
 
 func TestValidate_TemplateBothDAGAndLoop(t *testing.T) {
@@ -181,7 +181,7 @@ func TestValidate_TemplateBothDAGAndLoop(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for template with both dag and loop")
 	}
-	assertContains(t, err.Error(), "must have exactly one of dag/executor/loop")
+	assertContains(t, err.Error(), "must have exactly one of dag/task/loop")
 }
 
 func TestValidate_ExecutorTypeRequired(t *testing.T) {

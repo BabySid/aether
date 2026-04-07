@@ -90,14 +90,7 @@ func (e *Engine) createEligibleTasks(ctx context.Context, workflowRunID string, 
 
 		// Persist Skipped TaskRuns immediately (they count as terminal for downstream deps).
 		for _, task := range toSkip {
-			taskTmpl := internal.FindTemplate(wf, task.Template)
-			templateType := ""
-			if taskTmpl != nil {
-				templateType = internal.ResolveTemplateType(taskTmpl)
-			} else if task.Executor != nil {
-				// Inline executor on the DAG task node — treat as a leaf task.
-				templateType = model.TemplateTypeTask
-			}
+			templateType := resolveTaskTemplateType(wf, &task)
 			skippedPhase := model.PhaseSkipped
 			skipMsg := fmt.Sprintf("when condition %q evaluated to false", task.When)
 			skippedRun := &store.TaskRun{
@@ -124,14 +117,7 @@ func (e *Engine) createEligibleTasks(ctx context.Context, workflowRunID string, 
 
 		// Create Created TaskRuns for tasks that should execute, then activate immediately.
 		for _, task := range toExecute {
-			taskTmpl := internal.FindTemplate(wf, task.Template)
-			templateType := ""
-			if taskTmpl != nil {
-				templateType = internal.ResolveTemplateType(taskTmpl)
-			} else if task.Executor != nil {
-				// Inline executor on the DAG task node — treat as a leaf task.
-				templateType = model.TemplateTypeTask
-			}
+			templateType := resolveTaskTemplateType(wf, &task)
 			pendingPhase := model.PhaseCreated
 			newRun := &store.TaskRun{
 				RunID: e.idGen.Generate(idgen.Context{
@@ -381,4 +367,17 @@ func (e *Engine) resolveDAGInputs(ctx context.Context, workflowRunID string, wf 
 
 	binder := binding.NewBinder(e.exprEvaluator, e.secretStore, e.errorSink)
 	return binder.Bind(ctx, dagTmpl.DAG.Inputs, callSiteArgs, env)
+}
+
+// resolveTaskTemplateType determines the template type for a DAG task node.
+// It looks up the referenced template first; if absent, checks for an inline executor.
+func resolveTaskTemplateType(wf *model.Workflow, task *model.Task) string {
+	taskTmpl := internal.FindTemplate(wf, task.Template)
+	if taskTmpl != nil {
+		return internal.ResolveTemplateType(taskTmpl)
+	}
+	if task.Executor != nil {
+		return model.TemplateTypeTask
+	}
+	return ""
 }

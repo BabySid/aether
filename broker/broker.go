@@ -1,7 +1,7 @@
 // Package broker defines the task lifecycle management abstraction for aether.
 //
 // TaskBroker is the single bridge between Engine (master) and Worker.
-// It unifies task dispatch, cancellation, fetching, heartbeat, and completion
+// It unifies task dispatch, cancellation, fetching, and completion
 // into one interface. Implementations decide how tasks are distributed:
 //   - local: goroutine + in-process executor
 //   - distributed: message queue, Redis, HTTP, gRPC, etc.
@@ -45,11 +45,6 @@ type TaskBroker interface {
 	//   - local: directly invokes the StartHandler
 	//   - distributed: publishes to MQ, the consumer calls engine.OnTaskStarted
 	StartTask(ctx context.Context, taskRunID string, workerID string) error
-
-	// Heartbeat reports that a worker is still alive.
-	// meta carries optional extension data (e.g. load, running task list, resource usage).
-	// Implementations should treat this as idempotent.
-	Heartbeat(ctx context.Context, workerID string, meta map[string]any) error
 
 	// CompleteTask reports the final execution result of a task.
 	// Called by the worker after task execution finishes.
@@ -97,17 +92,6 @@ type TaskAssignment struct {
 	Resources     *model.Resources // resource requirements (nil if none)
 	Priority      int
 	RetryCount    int // number of retries already consumed (0 = first attempt)
-}
-
-// WorkerRegistration is sent by a worker to the broker at startup.
-// It carries the worker's identity, the executor types it can handle,
-// and the full ExecutorSchema for each type so the master can populate
-// its SchemaRegistry without a separate round-trip.
-type WorkerRegistration struct {
-	WorkerID      string                    // unique worker instance id
-	ExecutorTypes []string                  // types this worker can handle
-	Schemas       []model.ExecutorSchema // full schemas for each type
-	Tags          map[string]string         // optional routing labels
 }
 
 // TaskResult holds the result of a completed task execution.

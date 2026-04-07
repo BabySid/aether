@@ -94,7 +94,7 @@ type Retry struct {
 	//   tasks.<name>.code                           — exit code
 	//   tasks.<name>.msg                            — error message
 	//   tasks.<name>.outputs.parameters.<param>     — output parameter value
-	// When omitted, any non-Succeeded phase triggers a retry (up to Limit).
+	// When omitted, only Error and Timeout phases trigger a retry (up to Limit).
 	Expression string `json:"expression,omitempty"`
 }
 

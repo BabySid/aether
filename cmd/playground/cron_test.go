@@ -71,7 +71,6 @@ func newCronEngineBundle(t *testing.T) (*aether.Engine, *testScheduler, *MemoryS
 
 	var eng *aether.Engine
 	brok := NewLocalBroker(
-		reg,
 		func(ctx context.Context, taskRunID string) {
 			eng.OnTaskStarted(ctx, taskRunID)
 		},
@@ -79,6 +78,8 @@ func newCronEngineBundle(t *testing.T) (*aether.Engine, *testScheduler, *MemoryS
 			eng.OnTaskCompleted(ctx, result)
 		},
 	)
+	w := NewLocalWorker("test-worker", brok, reg)
+	brok.SetWorker(w)
 
 	var err error
 	eng, err = aether.New(
@@ -93,6 +94,8 @@ func newCronEngineBundle(t *testing.T) (*aether.Engine, *testScheduler, *MemoryS
 	if err != nil {
 		t.Fatalf("create engine: %v", err)
 	}
+	w.Start(context.Background(), 4)
+	t.Cleanup(func() { _ = brok.Close() })
 	return eng, sched, memStore
 }
 
@@ -251,10 +254,11 @@ func TestCronWorkflow_ErrNotSupported(t *testing.T) {
 
 	var eng *aether.Engine
 	brok := NewLocalBroker(
-		reg,
 		func(ctx context.Context, taskRunID string) { eng.OnTaskStarted(ctx, taskRunID) },
 		func(ctx context.Context, result *broker.TaskResult) { eng.OnTaskCompleted(ctx, result) },
 	)
+	w := NewLocalWorker("test-worker", brok, reg)
+	brok.SetWorker(w)
 
 	var err error
 	eng, err = aether.New(
@@ -267,6 +271,8 @@ func TestCronWorkflow_ErrNotSupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create engine: %v", err)
 	}
+	w.Start(context.Background(), 4)
+	t.Cleanup(func() { _ = brok.Close() })
 
 	ctx := context.Background()
 	cw := validTestCronWorkflow()

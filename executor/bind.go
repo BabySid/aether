@@ -61,13 +61,20 @@ func BindInputs(inputs *model.Inputs, dst any) error {
 	if inputs == nil {
 		return nil
 	}
+	rv := reflect.ValueOf(dst)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return fmt.Errorf("BindInputs: dst must be a non-nil pointer, got %T", dst)
+	}
+	if rv.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("BindInputs: dst must point to a struct, got pointer to %s", rv.Elem().Kind())
+	}
 	index := make(map[string]json.RawMessage, len(inputs.Parameters))
 	for _, p := range inputs.Parameters {
 		// p.Value is already json.RawMessage ([]byte), use directly
 		index[p.Name] = p.Value
 	}
-	t := reflect.TypeOf(dst).Elem()
-	v := reflect.ValueOf(dst).Elem()
+	t := rv.Elem().Type()
+	v := rv.Elem()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		name := parseJSONTagName(f.Tag.Get("json"))

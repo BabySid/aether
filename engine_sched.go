@@ -425,7 +425,6 @@ func (e *Engine) markAncestorsReady(ctx context.Context, workflowRunID string, p
 //
 // Called from OnTaskStarted when a leaf task transitions Ready → Running,
 // so container ancestors and the WorkflowRun reflect the moment real execution begins.
-// markAncestorsRunning walks up the scope tree and promotes Ready → Running.
 // Returns true if the WorkflowRun itself was promoted (first transition to Running).
 func (e *Engine) markAncestorsRunning(ctx context.Context, workflowRunID string, parentRunID string) (bool, error) {
 	startedAt := time.Now().UTC().Format(time.RFC3339)
@@ -556,16 +555,7 @@ func aggregatePhase(taskRuns []*store.TaskRun) (model.Phase, string) {
 		}
 	}
 
-	switch {
-	case hasCancelled:
-		return model.PhaseCancelled, "one or more tasks were cancelled"
-	case hasError:
-		return model.PhaseError, "one or more tasks errored"
-	case hasFailure:
-		return model.PhaseFailed, "one or more tasks failed"
-	default:
-		return model.PhaseSucceeded, ""
-	}
+	return resolveAggregatedPhase(hasCancelled, hasError, hasFailure)
 }
 
 // aggregatePhaseDAG is like aggregatePhase but respects the DAG's continueOn policy.
@@ -633,6 +623,12 @@ func aggregatePhaseDAG(taskRuns []*store.TaskRun, dag *model.DAG) (model.Phase, 
 		}
 	}
 
+	return resolveAggregatedPhase(hasCancelled, hasError, hasFailure)
+}
+
+// resolveAggregatedPhase maps the boolean flags from phase aggregation into
+// a single Phase and message string. Shared by aggregatePhase and aggregatePhaseDAG.
+func resolveAggregatedPhase(hasCancelled, hasError, hasFailure bool) (model.Phase, string) {
 	switch {
 	case hasCancelled:
 		return model.PhaseCancelled, "one or more tasks were cancelled"

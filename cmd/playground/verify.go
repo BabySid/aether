@@ -75,7 +75,11 @@ func Verify(exec *aether.WorkflowExecution, assert *WorkflowAssertion) []string 
 
 	// 3. workflow-level outputs
 	if len(assert.ExpectOutputs) > 0 {
-		verifyOutputs(&failures, "workflow", exec.Outputs, assert.ExpectOutputs)
+		var params []model.Parameter
+		if exec.Outputs != nil {
+			params = exec.Outputs.Parameters
+		}
+		verifyParameters(&failures, "workflow", "output", params, assert.ExpectOutputs)
 	}
 
 	// 4. per-task expectations
@@ -114,12 +118,20 @@ func verifyTasks(failures *[]string, tasks []aether.TaskExecution, expects []Tas
 
 		// outputs (subset match)
 		if len(ta.ExpectOutputs) > 0 {
-			verifyOutputs(failures, prefix, task.Outputs, ta.ExpectOutputs)
+			var outParams []model.Parameter
+			if task.Outputs != nil {
+				outParams = task.Outputs.Parameters
+			}
+			verifyParameters(failures, prefix, "output", outParams, ta.ExpectOutputs)
 		}
 
 		// inputs (subset match)
 		if len(ta.ExpectInputs) > 0 {
-			verifyInputs(failures, prefix, task.Inputs, ta.ExpectInputs)
+			var inParams []model.Parameter
+			if task.Inputs != nil {
+				inParams = task.Inputs.Parameters
+			}
+			verifyParameters(failures, prefix, "input", inParams, ta.ExpectInputs)
 		}
 
 		// retryCount
@@ -152,46 +164,23 @@ func verifyTasks(failures *[]string, tasks []aether.TaskExecution, expects []Tas
 	}
 }
 
-// verifyOutputs checks that all expected key-value pairs exist in outputs.
-func verifyOutputs(failures *[]string, prefix string, outputs *model.Outputs, expect map[string]json.RawMessage) {
-	outByName := make(map[string]json.RawMessage)
-	if outputs != nil {
-		for _, p := range outputs.Parameters {
-			outByName[p.Name] = p.Value
-		}
+// verifyParameters checks that all expected key-value pairs exist in the actual parameters.
+// label is used in error messages (e.g. "output" or "input").
+func verifyParameters(failures *[]string, prefix, label string, actual []model.Parameter, expect map[string]json.RawMessage) {
+	byName := make(map[string]json.RawMessage, len(actual))
+	for _, p := range actual {
+		byName[p.Name] = p.Value
 	}
 	for name, wantVal := range expect {
 		wantVal = expandDynamicValue(wantVal)
-		gotVal, exists := outByName[name]
+		gotVal, exists := byName[name]
 		if !exists {
-			*failures = append(*failures, fmt.Sprintf("%s output %q: not found", prefix, name))
+			*failures = append(*failures, fmt.Sprintf("%s %s %q: not found", prefix, label, name))
 			continue
 		}
 		if !jsonEqual(gotVal, wantVal) {
-			*failures = append(*failures, fmt.Sprintf("%s output %q: got %s, want %s",
-				prefix, name, string(gotVal), string(wantVal)))
-		}
-	}
-}
-
-// verifyInputs checks that all expected key-value pairs exist in inputs.
-func verifyInputs(failures *[]string, prefix string, inputs *model.Inputs, expect map[string]json.RawMessage) {
-	inByName := make(map[string]json.RawMessage)
-	if inputs != nil {
-		for _, p := range inputs.Parameters {
-			inByName[p.Name] = p.Value
-		}
-	}
-	for name, wantVal := range expect {
-		wantVal = expandDynamicValue(wantVal)
-		gotVal, exists := inByName[name]
-		if !exists {
-			*failures = append(*failures, fmt.Sprintf("%s input %q: not found", prefix, name))
-			continue
-		}
-		if !jsonEqual(gotVal, wantVal) {
-			*failures = append(*failures, fmt.Sprintf("%s input %q: got %s, want %s",
-				prefix, name, string(gotVal), string(wantVal)))
+			*failures = append(*failures, fmt.Sprintf("%s %s %q: got %s, want %s",
+				prefix, label, name, string(gotVal), string(wantVal)))
 		}
 	}
 }

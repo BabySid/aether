@@ -42,11 +42,13 @@ type ArtifactSource struct {
 }
 
 // Archive defines the archive format for an artifact.
+// TODO: reserved for artifact upload/download feature; not yet used in the engine.
 type Archive struct {
 	Type string `json:"type,omitempty"` // none, tar, tar.gz, zip
 }
 
 // OSSSourceConfig is the configuration for OSS artifact storage.
+// TODO: reserved for artifact upload/download feature; not yet used in the engine.
 type OSSSourceConfig struct {
 	Bucket   string `json:"bucket"`
 	Key      string `json:"key"`
@@ -54,11 +56,13 @@ type OSSSourceConfig struct {
 }
 
 // LocalSourceConfig is the configuration for local artifact storage.
+// TODO: reserved for artifact upload/download feature; not yet used in the engine.
 type LocalSourceConfig struct {
 	Path string `json:"path"`
 }
 
 // HTTPSourceConfig is the configuration for HTTP artifact storage.
+// TODO: reserved for artifact upload/download feature; not yet used in the engine.
 type HTTPSourceConfig struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`

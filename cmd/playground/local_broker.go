@@ -1,4 +1,5 @@
-// local_broker.go — goroutine-based TaskBroker for standalone mode.
+// local_broker.go — channel-based TaskBroker for standalone mode.
+// Tasks are dispatched via an internal channel and consumed by LocalWorker goroutines.
 package main
 
 import (
@@ -7,53 +8,45 @@ import (
 	"sync"
 
 	"github.com/BabySid/aether/broker"
-	"github.com/BabySid/aether/executor"
 	"github.com/BabySid/aether/internal"
-	"github.com/BabySid/aether/model"
 )
 
-// LocalBroker executes tasks in-process using goroutines.
+// LocalBroker routes tasks between the engine and local workers via a channel.
 type LocalBroker struct {
-	registry     *executor.Registry
 	startHandler broker.StartHandler
 	handler      broker.CompletionHandler
 
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
-	wg      sync.WaitGroup
-	closed  bool
+	mu       sync.Mutex
+	closed   bool
+	taskCh   chan *broker.TaskAssignment
+	taskCtxs map[string]context.Context    // taskRunID → execution context (with timeout)
+	cancels  map[string]context.CancelFunc // taskRunID → cancel func
+
+	worker *LocalWorker
 }
 
-// NewLocalBroker creates a LocalBroker wired with the given registry and callbacks.
-func NewLocalBroker(reg *executor.Registry, startHandler broker.StartHandler, handler broker.CompletionHandler) *LocalBroker {
+// NewLocalBroker creates a LocalBroker with the given callbacks.
+func NewLocalBroker(startHandler broker.StartHandler, handler broker.CompletionHandler) *LocalBroker {
 	return &LocalBroker{
-		registry:     reg,
 		startHandler: startHandler,
 		handler:      handler,
+		taskCh:       make(chan *broker.TaskAssignment, 64),
+		taskCtxs:     make(map[string]context.Context),
 		cancels:      make(map[string]context.CancelFunc),
 	}
 }
 
-func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssignment) error {
-	plugin, ok := b.registry.Get(assignment.ExecutorType)
-	if !ok {
-		if b.handler != nil {
-			b.handler(ctx, &broker.TaskResult{
-				TaskRunID:     assignment.TaskRunID,
-				WorkflowRunID: assignment.WorkflowRunID,
-				ExecOutputs: &model.ExecOutputs{
-					Code:    model.ExecCodeError,
-					Message: fmt.Sprintf("unknown executor type: %s", assignment.ExecutorType),
-				},
-			})
-		}
-		return nil
-	}
+// SetWorker associates the worker that will consume tasks from this broker.
+func (b *LocalBroker) SetWorker(w *LocalWorker) {
+	b.worker = w
+}
 
+func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssignment) error {
 	taskCtx, cancel := context.WithCancel(ctx)
 	if assignment.Timeout != "" {
 		timeout, err := internal.ParseDuration(assignment.Timeout)
 		if err == nil && timeout > 0 {
+			cancel() // release the previous WithCancel before replacing
 			taskCtx, cancel = context.WithTimeout(ctx, timeout)
 		}
 	}
@@ -64,72 +57,21 @@ func (b *LocalBroker) Dispatch(ctx context.Context, assignment *broker.TaskAssig
 		cancel()
 		return fmt.Errorf("broker is closed")
 	}
+	b.taskCtxs[assignment.TaskRunID] = taskCtx
 	b.cancels[assignment.TaskRunID] = cancel
-	b.wg.Add(1)
 	b.mu.Unlock()
 
-	go func() {
-		defer b.wg.Done()
-		defer func() {
-			b.mu.Lock()
-			delete(b.cancels, assignment.TaskRunID)
-			b.mu.Unlock()
-			cancel()
-		}()
-
-		req := &executor.ExecuteRequest{
-			TaskRunID:     assignment.TaskRunID,
-			WorkflowRunID: assignment.WorkflowRunID,
-			TaskName:      assignment.TaskName,
-			TemplateName:  assignment.TemplateName,
-			Inputs:        assignment.Inputs,
-			Resources:     assignment.Resources,
-			Timeout:       assignment.Timeout,
-			RetryCount:    assignment.RetryCount,
-		}
-
-		if b.startHandler != nil {
-			b.startHandler(ctx, assignment.TaskRunID)
-		}
-
-		execOutputs, err := plugin.Execute(taskCtx, req)
-
-		// --- ExecCode normalization ---
-		// The executor sets Code for business outcomes (Succeeded/Suspended/Failed).
-		// The broker translates system-level errors (timeout, panic) into ExecCode
-		// so the engine can derive Phase uniformly from Code alone.
-		//
-		//   ctx.Err() != nil → ExecCodeTimeout
-		//   err != nil       → ExecCodeError
-		//   otherwise        → Code already set by executor (0/1/2)
-		taskResult := &broker.TaskResult{
-			TaskRunID:     assignment.TaskRunID,
-			WorkflowRunID: assignment.WorkflowRunID,
-			ExecOutputs:   execOutputs,
-		}
-		if taskResult.ExecOutputs == nil {
-			taskResult.ExecOutputs = &model.ExecOutputs{}
-		}
-
-		if err != nil {
-			if taskCtx.Err() != nil {
-				taskResult.ExecOutputs.Code = model.ExecCodeTimeout
-				taskResult.ExecOutputs.Message = fmt.Sprintf("task timed out: %v", taskCtx.Err())
-			} else {
-				taskResult.ExecOutputs.Code = model.ExecCodeError
-				if taskResult.ExecOutputs.Message == "" {
-					taskResult.ExecOutputs.Message = err.Error()
-				}
-			}
-		}
-		// No else needed: executor already set Code (ExecCodeSucceeded/Suspended/Failed).
-
-		if b.handler != nil {
-			b.handler(ctx, taskResult)
-		}
-	}()
-
-	return nil
+	select {
+	case b.taskCh <- assignment:
+		return nil
+	case <-ctx.Done():
+		b.mu.Lock()
+		delete(b.taskCtxs, assignment.TaskRunID)
+		delete(b.cancels, assignment.TaskRunID)
+		b.mu.Unlock()
+		cancel()
+		return ctx.Err()
+	}
 }
 
 func (b *LocalBroker) Cancel(_ context.Context, taskRunID string) error {
@@ -143,11 +85,31 @@ func (b *LocalBroker) Cancel(_ context.Context, taskRunID string) error {
 }
 
 func (b *LocalBroker) FetchTask(ctx context.Context, _ string) (*broker.TaskAssignment, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
+	select {
+	case assignment, ok := <-b.taskCh:
+		if !ok {
+			return nil, fmt.Errorf("broker closed")
+		}
+		return assignment, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
-func (b *LocalBroker) Heartbeat(_ context.Context, _ string, _ map[string]any) error { return nil }
+// TaskContext returns the execution context (with timeout) for a dispatched task.
+func (b *LocalBroker) TaskContext(taskRunID string) context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.taskCtxs[taskRunID]
+}
+
+// CleanupTask removes the context and cancel entries for a completed task.
+func (b *LocalBroker) CleanupTask(taskRunID string) {
+	b.mu.Lock()
+	delete(b.taskCtxs, taskRunID)
+	delete(b.cancels, taskRunID)
+	b.mu.Unlock()
+}
 
 func (b *LocalBroker) StartTask(ctx context.Context, taskRunID string, _ string) error {
 	if b.startHandler != nil {
@@ -157,6 +119,7 @@ func (b *LocalBroker) StartTask(ctx context.Context, taskRunID string, _ string)
 }
 
 func (b *LocalBroker) CompleteTask(ctx context.Context, result *broker.TaskResult) error {
+	b.CleanupTask(result.TaskRunID)
 	if b.handler != nil {
 		b.handler(ctx, result)
 	}
@@ -170,6 +133,11 @@ func (b *LocalBroker) Close() error {
 		cancel()
 	}
 	b.mu.Unlock()
-	b.wg.Wait()
+
+	close(b.taskCh)
+
+	if b.worker != nil {
+		b.worker.Stop()
+	}
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/BabySid/aether/store"
 	"github.com/BabySid/aether/timeout"
 	"github.com/BabySid/aether/vars"
+	"github.com/BabySid/aether/worker"
 )
 
 // Option configures an Engine instance.
@@ -32,6 +33,8 @@ func WithExecutor(plugin executor.Plugin) Option {
 		if e.executorReg == nil {
 			e.executorReg = executor.NewRegistry()
 		}
+		// Error ignored: Option functions cannot return errors by design.
+		// Duplicate type names will be caught at workflow validation time.
 		_ = e.executorReg.Register(plugin)
 	}
 }
@@ -69,6 +72,7 @@ func WithTaskBroker(b broker.TaskBroker) Option {
 }
 
 // WithArtifactStore sets the artifact store (optional).
+// TODO: currently stored but not yet wired into execution; will be used for artifact upload/download.
 func WithArtifactStore(a artifact.Repository) Option {
 	return func(e *Engine) {
 		e.artifactStore = a
@@ -130,6 +134,15 @@ func WithVarsSource(p vars.Source) Option {
 		if p != nil {
 			e.varsSources = append(e.varsSources, p)
 		}
+	}
+}
+
+// WithWorkerRegistry sets the worker registration and discovery backend (optional).
+// When configured, distributed broker implementations can query the registry
+// to find workers capable of handling specific executor types.
+func WithWorkerRegistry(r worker.Registry) Option {
+	return func(e *Engine) {
+		e.workerRegistry = r
 	}
 }
 

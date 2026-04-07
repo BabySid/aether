@@ -64,7 +64,7 @@ func (e *Engine) triggerCronRun(cronID string) {
 
 	// 5. Missed schedule check.
 	if record.Status != nil && record.Status.LastScheduleTime != nil {
-		missedCount := e.countMissedSchedules(cw.Spec.Schedule, cw.Spec.Timezone, *record.Status.LastScheduleTime, now)
+		missedCount := countMissedSchedules(cw.Spec.Schedule, cw.Spec.Timezone, *record.Status.LastScheduleTime, now)
 		if missedCount > maxMissedSchedules {
 			e.reportError(ctx, fmt.Errorf("missed %d schedules (>%d), skipping", missedCount, maxMissedSchedules), errsink.ErrorContext{
 				Operation: "cronTrigger.missedSchedule", Severity: errsink.SeverityWarning,
@@ -164,7 +164,7 @@ func (e *Engine) reloadCronWorkflows(ctx context.Context) error {
 
 // countMissedSchedules counts how many cron triggers were missed between lastSchedule and now.
 // This is a simplified implementation that estimates based on the schedule string.
-func (e *Engine) countMissedSchedules(schedule, timezone string, lastSchedule, now time.Time) int {
+func countMissedSchedules(schedule, timezone string, lastSchedule, now time.Time) int {
 	interval := estimateCronInterval(schedule)
 	if interval <= 0 {
 		return 0

@@ -83,7 +83,7 @@ func Validate(wf *model.Workflow) error {
 			count++
 		}
 		if count != 1 {
-			return fmt.Errorf("template %q must have exactly one of dag/executor/loop", name)
+			return fmt.Errorf("template %q must have exactly one of dag/task/loop", name)
 		}
 
 		if tmpl.DAG != nil {
@@ -92,25 +92,18 @@ func Validate(wf *model.Workflow) error {
 			}
 		}
 
+		// Validate input parameter names (common to all template types).
+		if err := validateInputParamNames(name, tmpl.GetInputs()); err != nil {
+			return err
+		}
+
 		if tmpl.Task != nil {
 			if tmpl.Task.Executor != nil && tmpl.Task.Executor.Type == "" {
 				return fmt.Errorf("template %q: executor.type is required", name)
 			}
-			if err := validateInputParamNames(name, tmpl.GetInputs()); err != nil {
-				return err
-			}
-		}
-
-		if tmpl.DAG != nil {
-			if err := validateInputParamNames(name, tmpl.GetInputs()); err != nil {
-				return err
-			}
 		}
 
 		if tmpl.Loop != nil {
-			if err := validateInputParamNames(name, tmpl.GetInputs()); err != nil {
-				return err
-			}
 			if err := validateLoop(wf, tmpl.Loop); err != nil {
 				return fmt.Errorf("template %q: %w", name, err)
 			}

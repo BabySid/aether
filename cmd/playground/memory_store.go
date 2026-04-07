@@ -209,6 +209,19 @@ func (m *MemoryStore) GetWorkflowRun(_ context.Context, runID string) (*store.Wo
 		s := *run.Message
 		cp.Message = &s
 	}
+	if run.Outputs != nil {
+		o := *run.Outputs
+		o.Parameters = append([]model.Parameter(nil), run.Outputs.Parameters...)
+		cp.Outputs = &o
+	}
+	if run.Metrics != nil {
+		m := *run.Metrics
+		cp.Metrics = &m
+	}
+	if run.Deadline != nil {
+		d := *run.Deadline
+		cp.Deadline = &d
+	}
 	return &cp, nil
 }
 
@@ -221,8 +234,8 @@ func (m *MemoryStore) UpdateWorkflowRun(_ context.Context, run *store.WorkflowRu
 	}
 	if existing.Token != run.Token {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("workflow run %s: token mismatch (expected %d, got %d)",
-			run.RunID, existing.Token, run.Token)
+		return nil, fmt.Errorf("workflow run %s (expected token %d, got %d): %w",
+			run.RunID, existing.Token, run.Token, store.ErrTokenMismatch)
 	}
 	if run.Status != nil {
 		s := *run.Status
@@ -365,8 +378,8 @@ func (m *MemoryStore) UpdateTaskRun(_ context.Context, run *store.TaskRun) (*sto
 	}
 	if existing.Token != run.Token {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("task run %s: token mismatch (expected %d, got %d)",
-			run.RunID, existing.Token, run.Token)
+		return nil, fmt.Errorf("task run %s (expected token %d, got %d): %w",
+			run.RunID, existing.Token, run.Token, store.ErrTokenMismatch)
 	}
 	if run.Status != nil {
 		s := *run.Status
@@ -611,6 +624,20 @@ func memDeepCopyTaskRun(tr *store.TaskRun) *store.TaskRun {
 	if tr.Deadline != nil {
 		t := *tr.Deadline
 		cp.Deadline = &t
+	}
+	if tr.Inputs != nil {
+		inp := *tr.Inputs
+		inp.Parameters = append([]model.Parameter(nil), tr.Inputs.Parameters...)
+		cp.Inputs = &inp
+	}
+	if tr.Outputs != nil {
+		out := *tr.Outputs
+		out.Parameters = append([]model.Parameter(nil), tr.Outputs.Parameters...)
+		cp.Outputs = &out
+	}
+	if tr.Metrics != nil {
+		m := *tr.Metrics
+		cp.Metrics = &m
 	}
 	return &cp
 }

@@ -262,7 +262,11 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 	return src.Vars()
 }
 
-// BuildTaskAssignment assembles a self-contained TaskAssignment that is passed to broker.Dispatch.
+// BuildTaskAssignment assembles a TaskAssignment skeleton (executor, timeout, resources).
+//
+// Inputs are intentionally excluded: callers must resolve and set assignment.Inputs
+// separately via binding.Binder.Bind() to ensure valueFrom and template variables are
+// expanded before the assignment is dispatched to the broker.
 //
 // Call timing: tr is still in Pending state when this is called. This function only merges
 // information — it does not trigger any state transition. The state change Pending → Running
@@ -270,34 +274,18 @@ func BuildTaskEnv(taskRuns []*store.TaskRun) map[string]any {
 //
 // Two information sources are merged:
 //
-//   - taskDecl      : definition layer — executor, inputs declaration, timeout default, resources.
+//   - taskDecl: definition layer — executor, inputs declaration, timeout default, resources.
 //     Either the named template's Task field (template-ref mode) or the inline DAG task
 //     node itself when it carries an executor (inline-executor mode).
-//   - taskCall : call-site layer — arguments and timeout override supplied by the DAG
-//     task node that references the template.  Nil when the task is a top-level entry or
+//   - taskCall: call-site layer — arguments and timeout override supplied by the DAG
+//     task node that references the template. Nil when the task is a top-level entry or
 //     a loop iteration (no DAG task node exists at the call site).
 //
-// Example — taskDecl defines timeout=10m and env=dev; taskCall overrides timeout=30s and env=prod:
-//
-//	taskDecl.inputs      = [{name:"region", default:"us-east-1"}, {name:"env", default:"dev"}]
-//	taskDecl.timeout     = "10m"
-//	taskCall.arguments = [{name:"env", value:"prod"}]
-//	taskCall.timeout   = "30s"
-//
-//	→ assignment.Timeout = "30s"                                           (callSite overrides def)
-//	→ assignment.Inputs  = [{name:"region", default:"us-east-1"},          (def default kept)
-//	                         {name:"env",    value:"prod"}]                 (callSite override wins)
-//
 // taskCall may be nil when:
-//   - ParentRunID == 0 (top-level task): no parent DAG node to look up.
+//   - ParentRunID == "" (top-level task): no parent DAG node to look up.
 //   - Parent is a Loop: iterations are dispatched directly without a DAG task node.
 //
-// When taskCall is nil, only definition-level defaults (timeout, inputs, resources) apply.
-// BuildTaskAssignment assembles a TaskAssignment skeleton (executor, timeout, resources).
-//
-// Inputs are intentionally excluded: callers must resolve and set assignment.Inputs
-// separately via binding.Binder.Bind() to ensure valueFrom and template variables are
-// expanded before the assignment is dispatched to the broker.
+// When taskCall is nil, only definition-level defaults (timeout, resources) apply.
 func BuildTaskAssignment(workflowRunID string, tr *store.TaskRun, taskDecl *model.Task, taskCall *model.Task, wf *model.Workflow) (*broker.TaskAssignment, error) {
 	if taskDecl == nil {
 		return nil, fmt.Errorf("no task definition for task %q: cannot build assignment", tr.TaskName)

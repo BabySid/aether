@@ -10,7 +10,7 @@
 //	-out        Output HTML report path (optional; omit or set "" to skip HTML generation).
 //	-result     Output machine-readable JSON result path (optional).
 //	-verify     Assertion JSON file path for automated verification (optional).
-//	-timeout    Maximum seconds to wait for the workflow to finish (default: 60).
+//	-timeout    Maximum seconds to wait for the workflow to finish (default: 5).
 //
 // The CLI auto-detects the resource kind from the JSON "kind" field:
 //   - "Workflow" (or absent) → runs as a normal Workflow.
@@ -298,7 +298,6 @@ func buildEngine(timeoutSec int, sched *immediateScheduler) (*aether.Engine, *Me
 	finishCh := make(chan struct{}, 64)
 
 	brok := NewLocalBroker(
-		reg,
 		func(ctx context.Context, taskRunID string) {
 			eng.OnTaskStarted(ctx, taskRunID)
 		},
@@ -310,6 +309,8 @@ func buildEngine(timeoutSec int, sched *immediateScheduler) (*aether.Engine, *Me
 			}
 		},
 	)
+	worker := NewLocalWorker("local-worker", brok, reg)
+	brok.SetWorker(worker)
 
 	opts := []aether.Option{
 		aether.WithStore(memStore),
@@ -338,6 +339,7 @@ func buildEngine(timeoutSec int, sched *immediateScheduler) (*aether.Engine, *Me
 	if startErr := eng.Start(ctx); startErr != nil {
 		log.Fatalf("start engine: %v", startErr)
 	}
+	worker.Start(ctx, 4)
 
 	return eng, memStore, finishCh, ctx, cancel
 }

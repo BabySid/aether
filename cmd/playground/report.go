@@ -338,9 +338,9 @@ func generateHTMLReport(data ReportData) string {
 
       <!-- diff legend -->
       <div class="diff-legend">
-        <div class="diff-legend-item"><div class="dl-swatch dl-new"></div><span>新增记录</span></div>
-        <div class="diff-legend-item"><div class="dl-swatch dl-changed"></div><span>字段变更</span></div>
-        <div class="diff-legend-item"><div class="dl-swatch dl-same"></div><span>无变化</span></div>
+        <div class="diff-legend-item"><div class="dl-swatch dl-new"></div><span>New Record</span></div>
+        <div class="diff-legend-item"><div class="dl-swatch dl-changed"></div><span>Field Changed</span></div>
+        <div class="diff-legend-item"><div class="dl-swatch dl-same"></div><span>Unchanged</span></div>
       </div>
 
       <!-- operation summary bar -->

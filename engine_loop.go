@@ -27,13 +27,15 @@ func (e *Engine) resolveLoopInputs(ctx context.Context, workflowRunID string, wf
 		return nil, nil
 	}
 
-	// Find call-site Arguments from the parent DAG task node (if any).
+	// Find call-site Arguments and parent inputs from the parent DAG task node (if any).
 	var callSiteArgs *model.Arguments
+	var parentInputs *model.Inputs
 	if loopTR.ParentRunID != "" {
 		parentTR, err := e.store.GetTaskRun(ctx, loopTR.ParentRunID)
 		if err != nil {
 			return nil, fmt.Errorf("get parent for loop %q: %w", loopTR.TaskName, err)
 		}
+		parentInputs = parentTR.Inputs
 		parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
 		if parentTmpl != nil && parentTmpl.DAG != nil {
 			if dagTask := internal.FindTask(parentTmpl.DAG, loopTR.TaskName); dagTask != nil {
@@ -42,13 +44,14 @@ func (e *Engine) resolveLoopInputs(ctx context.Context, workflowRunID string, wf
 		}
 	}
 
-	// Build EvalVars: workflow-level args + sibling outputs.
+	// Build EvalVars: workflow-level args + parent inputs + sibling outputs.
 	siblingRuns, err := e.store.ListTaskRunsByParent(ctx, workflowRunID, loopTR.ParentRunID)
 	if err != nil {
 		return nil, fmt.Errorf("list siblings for loop input binding %q: %w", loopTR.TaskName, err)
 	}
 	env := e.newVarBuilder().
 		WithWorkflowArgs(wf.Spec.Arguments).
+		WithResolvedInputs(parentInputs).
 		WithSiblingTaskRuns(siblingRuns).
 		Build()
 
@@ -85,8 +88,6 @@ func (e *Engine) resolveLoopInputs(ctx context.Context, workflowRunID string, wf
 // in TaskRun.Inputs and forwarded to the broker without further expression resolution.
 //
 // Zero-iteration loops are finalized as Succeeded immediately without entering advanceScope.
-// startLoopController initialises a Loop container and creates the first batch of
-// iteration TaskRuns.
 //
 // resolvedInputs is the result of resolveLoopInputs: call-site arguments merged with
 // the loop template's declared inputs. It is passed in-memory (not persisted) because

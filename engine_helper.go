@@ -202,6 +202,18 @@ func (e *Engine) submitInternal(ctx context.Context, wf *model.Workflow, cronWor
 	return workflowRunID, nil
 }
 
+// fireTaskHookFromParent resolves the parent DAG template, finds the task node, and fires
+// the appropriate task-level hooks. This extracts the repeated pattern of:
+//   parentTmpl := FindTemplate(wf, parentTR.TemplateName)
+//   if parentTmpl != nil && parentTmpl.DAG != nil { task := FindTask(...); FireTaskHooks(...) }
+func (e *Engine) fireTaskHookFromParent(ctx context.Context, wf *model.Workflow, parentTR *store.TaskRun, tr *store.TaskRun, workflowRunID string, phase model.Phase) {
+	parentTmpl := internal.FindTemplate(wf, parentTR.TemplateName)
+	if parentTmpl != nil && parentTmpl.DAG != nil {
+		task := internal.FindTask(parentTmpl.DAG, tr.TaskName)
+		internal.FireTaskHooks(ctx, e.hookNotifier, e.errorSink, task, workflowRunID, tr.RunID, phase)
+	}
+}
+
 // loadWorkflow loads and deserializes the workflow from a WorkflowRun.
 func (e *Engine) loadWorkflow(ctx context.Context, workflowRunID string) (*model.Workflow, error) {
 	run, err := e.store.GetWorkflowRun(ctx, workflowRunID)

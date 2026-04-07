@@ -67,6 +67,13 @@ func (r *Registry) Register(plugin Plugin) error {
 	return nil
 }
 
+// RegisterSchema registers an executor schema without a local plugin instance.
+// Used by distributed brokers to propagate remote worker schemas to the master,
+// enabling schema-aware validation even when executor plugins run on remote workers.
+func (r *Registry) RegisterSchema(schema model.ExecutorSchema) {
+	r.schemas[schema.Type] = schema
+}
+
 // Get returns the executor plugin for the given type.
 func (r *Registry) Get(executorType string) (Plugin, bool) {
 	p, ok := r.plugins[executorType]

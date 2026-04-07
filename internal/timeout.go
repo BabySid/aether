@@ -9,7 +9,7 @@ import (
 	"github.com/BabySid/aether/model"
 )
 
-// durationRegex matches durations like "30s", "5m", "1h", "1h30m", "500ms".
+// durationRegex matches simple single-unit durations like "30s", "5m", "1h", "2d", "500ms".
 var durationRegex = regexp.MustCompile(`^(\d+)(ms|s|m|h|d)$`)
 
 // ParseDuration parses a duration string (e.g., "30s", "5m", "1h", "2d").
