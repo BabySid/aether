@@ -1,7 +1,10 @@
 // Package cron defines the scheduling abstraction for CronWorkflow.
 package cron
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Scheduler manages cron-based scheduling entries.
 // Lifecycle is managed by the Engine: Engine.Start calls Scheduler.Start,
@@ -16,8 +19,11 @@ type Scheduler interface {
 	Stop()
 
 	// Add registers a cron entry. callback is invoked on each schedule match.
+	// The scheduledTime parameter passed to callback is the exact time the cron
+	// expression matched (the intended fire time), which may differ from wall-clock
+	// time if the scheduler fires slightly late.
 	// timezone is an IANA timezone string (e.g. "UTC", "Asia/Shanghai").
-	Add(id string, schedule string, timezone string, callback func()) error
+	Add(id string, schedule string, timezone string, callback func(scheduledTime time.Time)) error
 
 	// Remove unregisters a cron entry. No-op if id is not found.
 	Remove(id string)

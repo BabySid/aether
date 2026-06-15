@@ -19,7 +19,8 @@ import (
 const maxMissedSchedules = 100
 
 // triggerCronRun is the cron callback. It implements the trigger flow from the spec.
-func (e *Engine) triggerCronRun(cronID string) {
+// scheduledTime is the exact time the cron expression matched (intended fire time).
+func (e *Engine) triggerCronRun(cronID string, scheduledTime time.Time) {
 	ctx := context.Background()
 
 	// 1. Load CronWorkflow record.
@@ -64,7 +65,7 @@ func (e *Engine) triggerCronRun(cronID string) {
 
 	// 5. Missed schedule check.
 	if record.Status != nil && record.Status.LastScheduleTime != nil {
-		missedCount := countMissedSchedules(cw.Spec.Schedule, cw.Spec.Timezone, *record.Status.LastScheduleTime, now)
+		missedCount := countMissedSchedules(cw.Spec.Schedule, *record.Status.LastScheduleTime, now)
 		if missedCount > maxMissedSchedules {
 			e.reportError(ctx, fmt.Errorf("missed %d schedules (>%d), skipping", missedCount, maxMissedSchedules), errsink.ErrorContext{
 				Operation: "cronTrigger.missedSchedule", Severity: errsink.SeverityWarning,
@@ -76,11 +77,9 @@ func (e *Engine) triggerCronRun(cronID string) {
 	// 6. Check StartingDeadlineSeconds.
 	if cw.Spec.StartingDeadlineSeconds != nil {
 		deadline := time.Duration(*cw.Spec.StartingDeadlineSeconds) * time.Second
-		if record.Status != nil && record.Status.LastScheduleTime != nil {
-			elapsed := now.Sub(*record.Status.LastScheduleTime)
-			if elapsed > deadline {
-				return
-			}
+		lateness := now.Sub(scheduledTime)
+		if lateness > deadline {
+			return
 		}
 	}
 
@@ -151,8 +150,8 @@ func (e *Engine) reloadCronWorkflows(ctx context.Context) error {
 			continue
 		}
 		cronID := record.CronID
-		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func() {
-			e.triggerCronRun(cronID)
+		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func(scheduledTime time.Time) {
+			e.triggerCronRun(cronID, scheduledTime)
 		}); err != nil {
 			e.reportError(ctx, err, errsink.ErrorContext{
 				Operation: "reloadCronWorkflows.add", Severity: errsink.SeverityWarning,
@@ -164,7 +163,7 @@ func (e *Engine) reloadCronWorkflows(ctx context.Context) error {
 
 // countMissedSchedules counts how many cron triggers were missed between lastSchedule and now.
 // This is a simplified implementation that estimates based on the schedule string.
-func countMissedSchedules(schedule, timezone string, lastSchedule, now time.Time) int {
+func countMissedSchedules(schedule string, lastSchedule, now time.Time) int {
 	interval := estimateCronInterval(schedule)
 	if interval <= 0 {
 		return 0

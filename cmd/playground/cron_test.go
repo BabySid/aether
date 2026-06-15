@@ -16,14 +16,14 @@ import (
 // It stores callbacks and provides a Fire method to trigger them manually.
 type testScheduler struct {
 	mu        sync.Mutex
-	callbacks map[string]func()
+	callbacks map[string]func(time.Time)
 }
 
 func newTestScheduler() *testScheduler {
-	return &testScheduler{callbacks: make(map[string]func())}
+	return &testScheduler{callbacks: make(map[string]func(time.Time))}
 }
 
-func (s *testScheduler) Add(id, schedule, timezone string, callback func()) error {
+func (s *testScheduler) Add(id, schedule, timezone string, callback func(time.Time)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.callbacks[id] = callback
@@ -42,7 +42,7 @@ func (s *testScheduler) Fire(id string) {
 	cb := s.callbacks[id]
 	s.mu.Unlock()
 	if cb != nil {
-		cb()
+		cb(time.Now())
 	}
 }
 

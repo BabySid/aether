@@ -36,13 +36,26 @@ func (e *Engine) watchTimeouts(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case ev := <-e.timeoutWatcher.Events():
-			switch ev.Kind {
-			case timeout.KindTask:
-				e.OnTaskTimeout(ctx, ev.RunID)
-			case timeout.KindWorkflow:
-				e.OnWorkflowTimeout(ctx, ev.RunID)
-			}
+			e.handleTimeoutEvent(ctx, ev)
 		}
+	}
+}
+
+// handleTimeoutEvent processes a single timeout event with panic recovery,
+// ensuring the watchdog goroutine survives even if a handler panics.
+func (e *Engine) handleTimeoutEvent(ctx context.Context, ev timeout.TimeoutEvent) {
+	defer func() {
+		if r := recover(); r != nil {
+			e.reportError(ctx, fmt.Errorf("panic in timeout handler: %v", r), errsink.ErrorContext{
+				Operation: "watchTimeouts.panic", Severity: errsink.SeverityCritical,
+			})
+		}
+	}()
+	switch ev.Kind {
+	case timeout.KindTask:
+		e.OnTaskTimeout(ctx, ev.RunID)
+	case timeout.KindWorkflow:
+		e.OnWorkflowTimeout(ctx, ev.RunID)
 	}
 }
 

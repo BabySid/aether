@@ -121,8 +121,8 @@ func (e *Engine) SubmitCronWorkflow(ctx context.Context, cw *model.CronWorkflow)
 
 	// Register with scheduler (unless suspended).
 	if !cw.Spec.Suspend {
-		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func() {
-			e.triggerCronRun(cronID)
+		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func(scheduledTime time.Time) {
+			e.triggerCronRun(cronID, scheduledTime)
 		}); err != nil {
 			return "", fmt.Errorf("aether: register cron schedule: %w", err)
 		}
@@ -281,8 +281,8 @@ func (e *Engine) UpdateCronWorkflow(ctx context.Context, cronID string, cw *mode
 	// Re-register with scheduler.
 	e.cronScheduler.Remove(cronID)
 	if !cw.Spec.Suspend {
-		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func() {
-			e.triggerCronRun(cronID)
+		if err := e.cronScheduler.Add(cronID, cw.Spec.Schedule, cw.Spec.Timezone, func(scheduledTime time.Time) {
+			e.triggerCronRun(cronID, scheduledTime)
 		}); err != nil {
 			return fmt.Errorf("aether: register cron schedule: %w", err)
 		}
@@ -704,6 +704,13 @@ func (e *Engine) OnTaskCompleted(ctx context.Context, result *broker.TaskResult)
 						Operation: "onTaskCompleted.retryDispatch", Severity: errsink.SeverityError,
 					})
 					e.tryMarkTaskError(ctx, result.WorkflowRunID, tr.RunID, dispatchErr)
+					if advErr := e.advanceScope(ctx, result.WorkflowRunID, wf, tr.ParentRunID); advErr != nil {
+						e.reportError(ctx, advErr, errsink.ErrorContext{
+							WorkflowRunID: result.WorkflowRunID, TaskRunID: tr.RunID,
+							Operation: "onTaskCompleted.retryDispatchAdvance", Severity: errsink.SeverityCritical,
+						})
+						e.tryMarkWorkflowError(ctx, result.WorkflowRunID, advErr)
+					}
 				}
 			}
 			return
@@ -915,9 +922,13 @@ func (e *Engine) OnWorkflowTimeout(ctx context.Context, workflowRunID string) {
 // the parent ctx is cancelled. Pair every Start call with a Stop call.
 func (e *Engine) Start(ctx context.Context) error {
 	e.lifecycleMu.Lock()
+	if e.stopFn != nil && !e.stopped {
+		e.lifecycleMu.Unlock()
+		return fmt.Errorf("aether: %w: engine already started, call Stop() first", ErrInvalidState)
+	}
 	innerCtx, cancel := context.WithCancel(ctx)
 	e.stopFn = cancel
-	e.stopped = false // reset for a new Start cycle
+	e.stopped = false
 	e.lifecycleMu.Unlock()
 	if e.timeoutWatcher != nil {
 		if err := e.timeoutWatcher.Start(innerCtx); err != nil {

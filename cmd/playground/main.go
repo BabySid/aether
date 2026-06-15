@@ -59,17 +59,17 @@ var _ vars.Source = (*DeploymentSource)(nil)
 // triggering via Fire(). Used by the playground CLI for CronWorkflow testing.
 type immediateScheduler struct {
 	mu        sync.Mutex
-	callbacks map[string]func()
+	callbacks map[string]func(time.Time)
 }
 
 func newImmediateScheduler() *immediateScheduler {
-	return &immediateScheduler{callbacks: make(map[string]func())}
+	return &immediateScheduler{callbacks: make(map[string]func(time.Time))}
 }
 
 func (s *immediateScheduler) Start(_ context.Context) error { return nil }
 func (s *immediateScheduler) Stop()                         {}
 
-func (s *immediateScheduler) Add(id, _, _ string, callback func()) error {
+func (s *immediateScheduler) Add(id, _, _ string, callback func(time.Time)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.callbacks[id] = callback
@@ -87,7 +87,7 @@ func (s *immediateScheduler) Fire(id string) {
 	cb := s.callbacks[id]
 	s.mu.Unlock()
 	if cb != nil {
-		cb()
+		cb(time.Now())
 	}
 }
 
